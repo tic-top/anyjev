@@ -10,6 +10,14 @@ from .scoring import answer, softmax
 MAX_QUESTIONS = 64
 
 
+def _pair(out, what):
+    """Backends return (logprobs, prompt_tokens) since 0.6.0; a bare list would otherwise unpack into nonsense."""
+    if not (isinstance(out, tuple) and len(out) == 2):
+        raise RuntimeError(f"backend.{what} must return a (logprobs, prompt_tokens) tuple (llm2jev >= 0.6.0), "
+                           f"got {type(out).__name__}")
+    return out
+
+
 class LLM2Jev:
     def __init__(self, processor, backend, temperature=1.0, style="chat", workers=16):
         self.processor, self.backend, self.T, self.style = processor, backend, temperature, style
@@ -32,16 +40,16 @@ class LLM2Jev:
         items = list(prompts.items())
         if len(items) == 1:  # on the caller's thread: the shared pool must not cap concurrent requests
             (_, (text, keys)), = items
-            row, n = self.backend.score(text, images, self.ids[:len(keys)])
+            row, n = _pair(self.backend.score(text, images, self.ids[:len(keys)]), "score")
             rows = [row]
         else:
             self.backend.warm(prefix, images)  # branches then hit the prefix cache instead of racing on a cold one
             if not images and hasattr(self.backend, "score_many"):
                 k = max(len(keys) for _, (_, keys) in items)  # one label set for the call, sliced per question
-                rows, n = self.backend.score_many([text for _, (text, _) in items], self.ids[:k])
+                rows, n = _pair(self.backend.score_many([text for _, (text, _) in items], self.ids[:k]), "score_many")
             else:
                 futs = [self.pool.submit(self.backend.score, text, images, self.ids[:len(keys)]) for _, (text, keys) in items]
-                rows, ns = zip(*(f.result() for f in futs))
+                rows, ns = zip(*(_pair(f.result(), "score") for f in futs))
                 n = sum(ns)
         answers = {qid: answer(questions[qid], keys, softmax(row[:len(keys)], self.T))
                    for (qid, (_, keys)), row in zip(items, rows)}

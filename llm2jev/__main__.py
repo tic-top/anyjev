@@ -52,6 +52,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(code, {"error": f"backend: {exc.response.text if exc.response is not None else exc}"})
         except requests.RequestException as exc:
             return self._send(504, {"error": f"backend: {exc}"})
+        except RuntimeError as exc:  # a backend that breaks the score contract: our bug, not the client's
+            return self._send(500, {"error": str(exc)})
         self._send(200, {"id": f"jev-{uuid.uuid4().hex[:16]}", "model": body.get("model") or self.server.name,
                          "answers": answers, "usage": usage})
 

@@ -211,6 +211,16 @@ def test_backend_400_is_422_and_outage_is_504(tok):
     assert post(400) == 422 and post(503) == 504
 
 
+def test_pre_060_backend_returning_bare_list_gets_clear_error(tok):
+    class Old(Fake):
+        def score(self, text, images, ids):
+            return super().score(text, images, ids)[0]
+    jev = LLM2Jev(tok, Old())
+    for questions in ({"q": {"type": "noul"}}, QUESTIONS):  # 2 floats would unpack silently; single + pooled paths
+        with pytest.raises(RuntimeError, match=r"\(logprobs, prompt_tokens\) tuple"):
+            jev(STATE, questions)
+
+
 def test_strict_alternation_template_gets_question_in_last_user_turn(tok):
     class Strict:  # Gemma-style template: consecutive user turns raise
         def apply_chat_template(self, msgs, **kw):
