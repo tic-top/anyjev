@@ -1,4 +1,4 @@
-"""Fast tests use a fake backend and a real tokenizer. ANYJEV_SLOW=1 also runs real models through the HF backend
+"""Fast tests use a fake backend and a real tokenizer. LLM2JEV_SLOW=1 also runs real models through the HF backend
 (CPU is fine): Qwen3-0.6B for text, Qwen3.5-2B for image and video questions, Qwen2-Audio-7B for audio."""
 import math
 import os
@@ -6,12 +6,12 @@ import os
 import pytest
 from transformers import AutoTokenizer
 
-from anyjev import AnyJev
-from anyjev.backends import HF
-from anyjev.prompt import render, state_messages
+from llm2jev import LLM2Jev
+from llm2jev.backends import HF
+from llm2jev.prompt import render, state_messages
 
 TEXT_MODEL, VL_MODEL, AUDIO_MODEL = "Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B", "Qwen/Qwen2-Audio-7B-Instruct"
-slow = pytest.mark.skipif(not os.environ.get("ANYJEV_SLOW"), reason="set ANYJEV_SLOW=1 to run real models")
+slow = pytest.mark.skipif(not os.environ.get("LLM2JEV_SLOW"), reason="set LLM2JEV_SLOW=1 to run real models")
 STATE = [{"role": "system", "content": "You are a support assistant."},
          {"role": "user", "content": "I was charged twice. Please refund the duplicate."}]
 QUESTIONS = {
@@ -42,7 +42,7 @@ def tok():
 
 
 def test_labels_are_single_tokens_after_answer(tok):
-    jev = AnyJev(tok, Fake())
+    jev = LLM2Jev(tok, Fake())
     assert len(jev.labels) == 255 and jev.labels[:3] == ["A", "B", "C"] and len(set(jev.ids)) == 255
     _, prompts, _ = render(tok, STATE, QUESTIONS, jev.labels)
     for text, _ in prompts.values():
@@ -52,7 +52,7 @@ def test_labels_are_single_tokens_after_answer(tok):
 
 
 def test_prefix_is_shared_token_for_token(tok):
-    jev = AnyJev(tok, Fake())
+    jev = LLM2Jev(tok, Fake())
     prefix, prompts, _ = render(tok, STATE, QUESTIONS, jev.labels)
     seqs = [tok.encode(t, add_special_tokens=False) for t, _ in prompts.values()]
     common = min(len(os.path.commonprefix([seqs[0], s])) for s in seqs)
@@ -62,7 +62,7 @@ def test_prefix_is_shared_token_for_token(tok):
 
 def test_answers_and_warmup(tok):
     fake = Fake()
-    out = AnyJev(tok, fake)(STATE, QUESTIONS)
+    out = LLM2Jev(tok, fake)(STATE, QUESTIONS)
     p = [math.exp(-i) for i in range(3)]
     p = [x / sum(p) for x in p]
     assert len(fake.warms) == 1 and len(fake.calls) == 3
@@ -89,7 +89,7 @@ def test_video_and_audio_parts_keep_their_kind():
 
 
 def test_jevlm_style_is_the_raw_letters_prompt(tok):
-    jev = AnyJev(tok, Fake(), style="jevlm")
+    jev = LLM2Jev(tok, Fake(), style="jevlm")
     _, prompts, _ = render(tok, "The sky is blue.", QUESTIONS, jev.labels, "jevlm")
     assert prompts["refund"][0] == ("State:\nThe sky is blue.\n\nQuestion: Does the user request a refund?\nOptions:\n"
                                     "A. false: No\nB. true: Yes\nAnswer with the letter of the best option.\nAnswer:")
@@ -114,7 +114,7 @@ def _cpu_friendly():
 
 @slow
 def test_hf_text_sees_all_options(tok):
-    jev = AnyJev(tok, HF(TEXT_MODEL, dtype="float32"))
+    jev = LLM2Jev(tok, HF(TEXT_MODEL, dtype="float32"))
     q = lambda opts: {"q": {"type": "choice", "instructions": "What color is the sky?", "criteria": dict.fromkeys(opts)}}
     _, a, _ = render(tok, "The sky is blue.", q(["red", "green", "none of the above"]), jev.labels)
     _, b, _ = render(tok, "The sky is blue.", q(["red", "blue", "none of the above"]), jev.labels)
@@ -136,7 +136,7 @@ def test_hf_image_question(tmp_path):
     img = tmp_path / "red.png"
     Image.new("RGB", (64, 64), (220, 20, 20)).save(img)
     proc = AutoProcessor.from_pretrained(VL_MODEL)
-    jev = AnyJev(proc, HF(VL_MODEL, dtype="float32"))
+    jev = LLM2Jev(proc, HF(VL_MODEL, dtype="float32"))
     state = [{"role": "user", "content": [{"type": "image", "image": str(img)}, {"type": "text", "text": "Here is a picture."}]}]
     out = jev(state, {"color": {"type": "choice", "instructions": "What color is the square?",
                                 "criteria": {"red": None, "blue": None, "green": None}}})
@@ -151,7 +151,7 @@ def test_hf_video_question(tmp_path):
     from parity import moving_square
     _cpu_friendly()
     moving_square(str(tmp_path / "move.mp4"))
-    jev = AnyJev(AutoProcessor.from_pretrained(VL_MODEL), HF(VL_MODEL, dtype="float32"))
+    jev = LLM2Jev(AutoProcessor.from_pretrained(VL_MODEL), HF(VL_MODEL, dtype="float32"))
     state = [{"role": "user", "content": [{"type": "video", "video": str(tmp_path / "move.mp4")}]}]
     out = jev(state, _question("Which way does the red square move?", "left", "right", "up", "down"))
     assert out["q"]["choice"] == "right", out
@@ -164,7 +164,17 @@ def test_hf_audio_question(tmp_path):
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
     from parity import beep
     beep(str(tmp_path / "beep.wav"))
-    jev = AnyJev(AutoProcessor.from_pretrained(AUDIO_MODEL), HF(AUDIO_MODEL))
+    jev = LLM2Jev(AutoProcessor.from_pretrained(AUDIO_MODEL), HF(AUDIO_MODEL))
     state = [{"role": "user", "content": [{"type": "audio", "audio": str(tmp_path / "beep.wav")}]}]
     out = jev(state, _question("What is in the recording?", "a person talking", "a steady electronic beep", "a dog barking"))
     assert out["q"]["choice"] == "a steady electronic beep", out
+
+
+def test_old_anyjev_imports_still_work():
+    from anyjev import AnyJev
+    from anyjev.__main__ import serve
+    from anyjev.backends import BACKENDS as old
+    from anyjev.prompt import find_labels, render as old_render
+    import llm2jev.backends
+    import llm2jev.prompt
+    assert AnyJev is LLM2Jev and old is llm2jev.backends.BACKENDS and old_render is llm2jev.prompt.render and serve

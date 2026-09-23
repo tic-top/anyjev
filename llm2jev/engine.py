@@ -7,7 +7,7 @@ from .scoring import answer, softmax
 MAX_QUESTIONS = 64
 
 
-class AnyJev:
+class LLM2Jev:
     def __init__(self, processor, backend, temperature=1.0, style="chat", workers=16):
         self.processor, self.backend, self.T, self.style = processor, backend, temperature, style
         tok = getattr(processor, "tokenizer", processor)

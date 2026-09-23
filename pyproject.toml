@@ -1,5 +1,5 @@
 [project]
-name = "anyjev"
+name = "llm2jev"
 version = "0.1.0"
 description = "Any chat model, any engine (SGLang, vLLM, transformers) as a Jev-compatible probability decision service"
 readme = "README.md"
@@ -13,11 +13,12 @@ vision = ["torchvision", "pillow"]
 test = ["pytest"]
 
 [project.scripts]
-anyjev = "anyjev.__main__:main"
+llm2jev = "llm2jev.__main__:main"
+anyjev = "llm2jev.__main__:main"  # old name
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["anyjev"]
+packages = ["llm2jev", "anyjev"]  # anyjev: import alias for the old name

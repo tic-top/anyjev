@@ -1,5 +1,9 @@
-"""AnyJev: any chat model, any engine, as a Jev-compatible probability decision service.
-One prefill per question, all options in the prompt, one label token read out."""
-from .engine import AnyJev
+"""Old import name, kept so `import anyjev` / `from anyjev.backends import ...` keep working. Use `llm2jev`."""
+import importlib
+import sys
 
-__all__ = ["AnyJev"]
+from llm2jev import *  # noqa: F401,F403
+from llm2jev import AnyJev, LLM2Jev  # noqa: F401
+
+for _m in ("backends", "engine", "prompt", "scoring"):
+    sys.modules[f"{__name__}.{_m}"] = importlib.import_module(f"llm2jev.{_m}")

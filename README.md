@@ -1,4 +1,4 @@
-# AnyJev
+# llm2jev
 
 Turn **any chat model** into a [Jev](https://docs.typesafe.ai/api)-compatible probability decision service, on
 **SGLang, vLLM or plain transformers**, with no model or engine changes.
@@ -14,34 +14,37 @@ state + question + ALL options  ──one prefill──▶  logprobs of the opti
   once, and the engine's prefix cache (SGLang radix / vLLM APC) serves the rest.
 - **Images, video and audio in the state** (SGLang, vLLM and transformers backends) for multimodal models.
 
-AnyJev is an independent implementation of the documented System One wire format. It is not affiliated with TypeSafe.
+llm2jev is an independent implementation of the documented System One wire format. It is not affiliated with TypeSafe.
+
+It was called AnyJev before. `import anyjev`, `from anyjev import AnyJev` and the `anyjev` command still work as
+aliases. The PyPI project named `anyjev` is a different project.
 
 ## Quick start
 
 ```bash
-pip install "anyjev @ git+https://github.com/tic-top/anyjev"          # client + server; the engine runs separately
-pip install "anyjev[hf,vision] @ git+https://github.com/tic-top/anyjev" # + in-process transformers backend
+pip install "llm2jev @ git+https://github.com/tic-top/anyjev"          # client + server; the engine runs separately
+pip install "llm2jev[hf,vision] @ git+https://github.com/tic-top/anyjev" # + in-process transformers backend
 
 # SGLang
 python -m sglang.launch_server --model-path Qwen/Qwen3.5-2B --port 30000
-anyjev --model Qwen/Qwen3.5-2B --backend sglang --url http://127.0.0.1:30000
+llm2jev --model Qwen/Qwen3.5-2B --backend sglang --url http://127.0.0.1:30000
 
 # vLLM (--enable-scale-out opens the tokens-in endpoint used for images, video and audio)
 vllm serve Qwen/Qwen3.5-2B --max-logprobs 256 --return-tokens-as-token-ids --enable-scale-out --port 8000
-anyjev --model Qwen/Qwen3.5-2B --backend vllm --url http://127.0.0.1:8000
+llm2jev --model Qwen/Qwen3.5-2B --backend vllm --url http://127.0.0.1:8000
 
 # transformers, in-process reference (slow, no prefix cache)
-anyjev --model Qwen/Qwen3-0.6B --backend hf
+llm2jev --model Qwen/Qwen3-0.6B --backend hf
 ```
 
 From Python, without the HTTP server:
 
 ```python
 from transformers import AutoProcessor
-from anyjev import AnyJev
-from anyjev.backends import SGLang
+from llm2jev import LLM2Jev
+from llm2jev.backends import SGLang
 
-jev = AnyJev(AutoProcessor.from_pretrained("Qwen/Qwen3.5-2B"), SGLang("http://127.0.0.1:30000"))
+jev = LLM2Jev(AutoProcessor.from_pretrained("Qwen/Qwen3.5-2B"), SGLang("http://127.0.0.1:30000"))
 jev(state, questions)  # {"refund": {"type": "noul", "noul": 0.97}, ...}
 ```
 
@@ -59,7 +62,7 @@ curl localhost:8080/v1/systemone -H 'Content-Type: application/json' -d '{
 
 Media: put `{"type": "image", "image": "<path | https URL | data: URI>"}` parts in a state message, likewise
 `{"type": "video", "video": ...}` and `{"type": "audio", "audio": ...}` (or OpenAI-style `image_url` / `video_url` /
-`audio_url`). The transformers backend reads video from a path or URL only (`anyjev[hf]` brings the
+`audio_url`). The transformers backend reads video from a path or URL only (`llm2jev[hf]` brings the
 video and audio decoders). Audio on vLLM needs `vllm[audio]`.
 
 ## How a score is computed
@@ -139,12 +142,12 @@ new checkpoints on it too.
 
 For each question, the readout is a normalized distribution over the options, π(option | state). It comes from one
 prefill, on the same engines RL frameworks already use for rollouts, so it can serve as a decision policy directly.
-Use the same `anyjev.prompt.render` and label ids on the training side, so that rollout and learner score the same
+Use the same `llm2jev.prompt.render` and label ids on the training side, so that rollout and learner score the same
 logit.
 
 ## Tests
 
 ```bash
 pytest tests                    # fast: fake backend + real tokenizers
-ANYJEV_SLOW=1 pytest tests      # + real models through the transformers backend
+LLM2JEV_SLOW=1 pytest tests      # + real models through the transformers backend
 ```
