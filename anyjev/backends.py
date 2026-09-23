@@ -5,8 +5,18 @@ import io
 import math
 import mimetypes
 import os
+import threading
 
 import requests
+
+
+def _by_kind(media):
+    """render()'s media list -> {"image": [...], "video": [...], "audio": [...]} (images are bare source strings)."""
+    out = {"image": [], "video": [], "audio": []}
+    for m in media:
+        kind, src = ("image", m) if isinstance(m, str) else m
+        out[kind].append(src)
+    return out
 
 
 def _finite(values):
@@ -14,7 +24,8 @@ def _finite(values):
 
 
 class SGLang:
-    """SGLang /generate: max_new_tokens=1 + token_ids_logprob. Images go as image_data next to the rendered text."""
+    """SGLang /generate: max_new_tokens=1 + token_ids_logprob. Media go as image_data / video_data / audio_data next to
+    the rendered text."""
 
     def __init__(self, url, timeout=120, **_):
         self.url, self.timeout, self.http = url.rstrip("/"), timeout, requests.Session()
@@ -24,8 +35,7 @@ class SGLang:
                 # Every request asks for selected-token logprobs, warm-ups included: SGLang can crash when
                 # selected-logprob and plain requests share a batch (sgl-project/sglang#34719).
                 "return_logprob": True, "logprob_start_len": -1, "token_ids_logprob": ids}
-        if images:
-            body["image_data"] = images
+        body.update({f"{kind}_data": srcs for kind, srcs in _by_kind(images).items() if srcs})
         r = self.http.post(f"{self.url}/generate", json=body, timeout=self.timeout)
         r.raise_for_status()
         out = r.json()
@@ -44,7 +54,7 @@ class VLLM:
     """vLLM OpenAI /v1/completions with max_tokens=1 + logprob_token_ids (text prompts).
     Serve with --max-logprobs 256 --return-tokens-as-token-ids. Stock vLLM caps logprob_token_ids per request,
     so large label sets are split into chunks of the SAME prompt (the prefix cache makes repeats cheap).
-    Prompts with images go to the tokens-in endpoint /inference/v1/generate (serve with --enable-scale-out): the
+    Prompts with media go to the tokens-in endpoint /inference/v1/generate (serve with --enable-scale-out): the
     completions API takes no media, and the chat API would re-render the prompt with its own template."""
 
     def __init__(self, url, model, timeout=120, chunk=128, **_):
@@ -73,7 +83,7 @@ class VLLM:
         if not images:
             return lambda ids: self._post(text, ids)
         tokens = self._json("/tokenize", {"prompt": text, "add_special_tokens": False})["tokens"]
-        parts = [{"type": "image_url", "url": _uri(s)} for s in images]
+        parts = [{"type": f"{kind}_url", "url": _uri(s)} for kind, srcs in _by_kind(images).items() for s in srcs]
         return lambda ids: self._post_media(tokens, parts, ids)
 
     def warm(self, prefix, images):
@@ -93,13 +103,13 @@ def _uri(src):
         return f"data:{mimetypes.guess_type(path)[0] or 'application/octet-stream'};base64,{base64.b64encode(f.read()).decode()}"
 
 
-def _load_image(src):
-    from PIL import Image
+def _read(src):
     if src.startswith("data:"):
-        return Image.open(io.BytesIO(base64.b64decode(src.split(",", 1)[1]))).convert("RGB")
+        return base64.b64decode(src.split(",", 1)[1])
     if src.startswith(("http://", "https://")):
-        return Image.open(io.BytesIO(requests.get(src, timeout=30).content)).convert("RGB")
-    return Image.open(os.path.expanduser(src)).convert("RGB")
+        return requests.get(src, timeout=30).content
+    with open(os.path.expanduser(src), "rb") as f:
+        return f.read()
 
 
 class HF:
@@ -108,15 +118,19 @@ class HF:
 
     def __init__(self, model, device=None, dtype="bfloat16", **_):
         import torch
-        from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, AutoTokenizer
+        import transformers
+        from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
         self.torch = torch
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         cfg = AutoConfig.from_pretrained(model)
-        multimodal = hasattr(cfg, "vision_config")
-        cls = AutoModelForImageTextToText if multimodal else AutoModelForCausalLM
+        multimodal = hasattr(cfg, "vision_config") or hasattr(cfg, "audio_config")
+        # AutoModelForMultimodalLM (transformers 5) also maps audio models; older releases only have image-text-to-text
+        mm_cls = getattr(transformers, "AutoModelForMultimodalLM", transformers.AutoModelForImageTextToText)
+        cls = mm_cls if multimodal else AutoModelForCausalLM
         self.model = cls.from_pretrained(model, dtype=getattr(torch, dtype)).to(self.device).eval()
         self.processor = AutoProcessor.from_pretrained(model) if multimodal else None
         self.tok = AutoTokenizer.from_pretrained(model)
+        self.lock = threading.Lock()  # AnyJev scores from worker threads; one in-process model runs one forward at a time
 
     def warm(self, prefix, images):
         pass
@@ -125,12 +139,23 @@ class HF:
         torch = self.torch
         if images:
             if self.processor is None:
-                raise ValueError("this model has no vision tower")
-            inputs = self.processor(text=[text], images=[_load_image(s) for s in images], return_tensors="pt")
+                raise ValueError("this model takes text only")
+            media, kw = _by_kind(images), {}
+            if media["image"]:
+                from PIL import Image
+                kw["images"] = [Image.open(io.BytesIO(_read(s))).convert("RGB") for s in media["image"]]
+            if media["video"]:  # the processor decodes and samples frames itself (paths or URLs)
+                kw["videos"] = media["video"]
+            if media["audio"]:
+                import librosa
+                sr = self.processor.feature_extractor.sampling_rate
+                kw["audio"] = [librosa.load(io.BytesIO(_read(s)), sr=sr)[0] for s in media["audio"]]
+                kw["sampling_rate"] = sr
+            inputs = self.processor(text=[text], return_tensors="pt", **kw)
         else:
             inputs = {"input_ids": torch.tensor([self.tok.encode(text, add_special_tokens=False)])}
         inputs = {k: v.to(self.device) for k, v in inputs.items()}
-        with torch.no_grad():
+        with self.lock, torch.no_grad():
             logits = self.model(**inputs).logits[0, -1].float().log_softmax(-1)
         return [float(logits[i]) for i in ids]
 

@@ -12,7 +12,7 @@ state + question + ALL options  ──one prefill──▶  logprobs of the opti
 - **Standard chat template, thinking off.** Works with instruct models zero-shot; fine-tuned checkpoints use the same prompt.
 - **Shared prefix, rendered once.** Every question of a request starts with byte-identical text, the prefix is warmed
   once, and the engine's prefix cache (SGLang radix / vLLM APC) serves the rest.
-- **Images in the state** (SGLang, vLLM and transformers backends) for multimodal models.
+- **Images, video and audio in the state** (SGLang, vLLM and transformers backends) for multimodal models.
 
 AnyJev is an independent implementation of the documented System One wire format. It is not affiliated with TypeSafe.
 
@@ -26,7 +26,7 @@ pip install "anyjev[hf,vision] @ git+https://github.com/tic-top/anyjev" # + in-p
 python -m sglang.launch_server --model-path Qwen/Qwen3.5-2B --port 30000
 anyjev --model Qwen/Qwen3.5-2B --backend sglang --url http://127.0.0.1:30000
 
-# vLLM (--enable-scale-out opens the tokens-in endpoint used for images)
+# vLLM (--enable-scale-out opens the tokens-in endpoint used for images, video and audio)
 vllm serve Qwen/Qwen3.5-2B --max-logprobs 256 --return-tokens-as-token-ids --enable-scale-out --port 8000
 anyjev --model Qwen/Qwen3.5-2B --backend vllm --url http://127.0.0.1:8000
 
@@ -57,8 +57,10 @@ curl localhost:8080/v1/systemone -H 'Content-Type: application/json' -d '{
                    "criteria": ["Routine", "Urgent", "Emergency"]}}}'
 ```
 
-Images: put `{"type": "image", "image": "<path | https URL | data: URI>"}` (or OpenAI-style `image_url`) parts in a
-state message.
+Media: put `{"type": "image", "image": "<path | https URL | data: URI>"}` parts in a state message, likewise
+`{"type": "video", "video": ...}` and `{"type": "audio", "audio": ...}` (or OpenAI-style `image_url` / `video_url` /
+`audio_url`). The transformers backend reads video from a path or URL only (`anyjev[hf]` brings the
+video and audio decoders). Audio on vLLM needs `vllm[audio]`.
 
 ## How a score is computed
 
@@ -103,15 +105,22 @@ need calibrated probabilities.
 Parity = `scripts/parity.py`: the engine and the transformers reference score the same rendered prompts. Every
 question must agree on the argmax and stay within 0.03 in probability.
 
-| backend | text | image |
-|---|---|---|
-| transformers | reference (Qwen3-0.6B, Qwen3.5-2B) | reference (Qwen3.5-2B) |
-| SGLang 0.5.9 | parity ✓ Qwen3-0.6B, Qwen3.5-2B | parity ✓ Qwen3.5-2B |
-| vLLM 0.30.0 | parity ✓ Qwen3-0.6B, Qwen3.5-2B | parity ✓ Qwen3.5-2B |
+| backend | text | image | video | audio |
+|---|---|---|---|---|
+| transformers | reference (Qwen3-0.6B, Qwen3.5-2B, Qwen2-Audio-7B) | reference (Qwen3.5-2B) | reference (Qwen3.5-2B) | reference (Qwen2-Audio-7B) |
+| SGLang 0.5.9 | parity ✓ Qwen3-0.6B, Qwen3.5-2B, Qwen2-Audio-7B | parity ✓ Qwen3.5-2B | parity ✓ Qwen3.5-2B ¹ | 30 s clips only ² |
+| vLLM 0.30.0 | parity ✓ Qwen3-0.6B, Qwen3.5-2B, Qwen2-Audio-7B | parity ✓ Qwen3.5-2B | parity ✓ Qwen3.5-2B | parity ✓ Qwen2-Audio-7B |
+
+¹ Within tolerance, but not byte-identical. For Qwen3.5 video, SGLang drops the template's outer
+`<|vision_start|>…<|vision_end|>` around the per-frame blocks (2 tokens) that transformers and vLLM keep. It also
+upscales small frames (128 px becomes about 320 px), so the parity clip is 320 px.
+² SGLang 0.5.9 runs the Qwen2-Audio encoder without the feature attention mask, so a clip shorter than Whisper's 30 s
+window attends to its zero padding. A 2 s clip is off by 0.20 in probability, and a 30 s clip matches. Use vLLM or
+transformers for audio.
 
 Differences of 0.01–0.03 in probability are bf16 kernel noise; tokenization is identical. For SGLang,
-`--enable-fp32-lm-head` roughly halves the gap. vLLM sends text prompts to `/v1/completions`, and prompts with images
-as exact token ids plus the images to `/inference/v1/generate`, so both engines score the same bytes. Audio and video parts are not supported yet. Models that cannot switch
+`--enable-fp32-lm-head` roughly halves the gap. vLLM sends text prompts to `/v1/completions`, and prompts with media
+as exact token ids plus the media to `/inference/v1/generate`, so the engine expands the placeholders itself. Models that cannot switch
 thinking off need a template that closes the think block.
 
 ```bash

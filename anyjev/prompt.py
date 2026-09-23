@@ -34,34 +34,36 @@ def render_value(value, indent=0):
     return f"{pad}{value}"
 
 
-def _media(part, images):
-    """Normalize one content part. Images/audio/video become template placeholders; their data is collected in order."""
+def _media(part, media):
+    """Normalize one content part. Images/videos/audio become template placeholders; their sources are collected in
+    order: an image as its source string, a video or audio clip as ("video" | "audio", source)."""
     kind = part.get("type")
     if kind == "text":
         return {"type": "text", "text": part["text"]}
-    if kind in ("image", "image_url"):
-        src = part.get("image") or part.get("url") or (part.get("image_url") or {}).get("url")
+    mod = kind.removesuffix("_url") if isinstance(kind, str) else None
+    if mod in ("image", "video", "audio"):
+        src = part.get(mod) or part.get("url") or (part.get(f"{mod}_url") or {}).get("url")
         if not src:
-            raise ValueError("image part needs 'image', 'url' or 'image_url.url'")
-        images.append(src)
-        return {"type": "image"}
-    raise ValueError(f"unsupported content part type {kind!r}")  # ponytail: audio/video parts once an engine path is tested
+            raise ValueError(f"{mod} part needs '{mod}', 'url' or '{mod}_url.url'")
+        media.append(src if mod == "image" else (mod, src))
+        return {"type": mod}
+    raise ValueError(f"unsupported content part type {kind!r}")
 
 
 def state_messages(state):
-    """-> (chat messages, image sources). A list of {role, content} (or {"messages": [...]}) stays a chat;
+    """-> (chat messages, media sources; see _media). A list of {role, content} (or {"messages": [...]}) stays a chat;
     anything else becomes one user message."""
     msgs = state["messages"] if isinstance(state, dict) and set(state) == {"messages"} else state
-    images = []
+    media = []
     if isinstance(msgs, list) and msgs and all(isinstance(m, dict) and "role" in m for m in msgs):
         out = []
         for m in msgs:
             content = m.get("content")
             if isinstance(content, list):
-                content = [_media(p, images) for p in content]
+                content = [_media(p, media) for p in content]
             out.append({**m, "content": content})
-        return out, images
-    return [{"role": "user", "content": render_value(state)}], images
+        return out, media
+    return [{"role": "user", "content": render_value(state)}], media
 
 
 def options_of(question):
@@ -82,7 +84,7 @@ def options_of(question):
 
 
 def render(processor, state, questions, labels, style="chat"):
-    """-> (prefix text, {qid: (full prompt text, answer keys)}, images). `processor` is a tokenizer or an HF processor.
+    """-> (prefix text, {qid: (full prompt text, answer keys)}, media). `processor` is a tokenizer or an HF processor.
     style="chat": the model's chat template, thinking off (default, works zero-shot).
     style="jevlm": a raw completion prompt (no chat template) for checkpoints fine-tuned on it; text only."""
     if style == "jevlm":
