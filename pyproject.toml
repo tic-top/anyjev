@@ -5,7 +5,7 @@ description = "Any chat model, any engine (SGLang, vLLM, transformers) as a Jev-
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = ["requests", "transformers>=4.51"]
+dependencies = ["requests", "transformers>=4.51", "jinja2"]  # jinja2: chat templates
 
 [project.optional-dependencies]
 hf = ["torch", "pillow", "accelerate", "av", "librosa"]  # av: video frames, librosa: audio
