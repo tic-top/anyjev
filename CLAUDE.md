@@ -14,11 +14,12 @@ show up in the first few lines. Collecting everything and printing it only at th
   lines appear, not after the run finishes.
 - Log the numbers you will judge the run by (per-question probs/argmax, ms, errors). "done" alone doesn't count.
 
-## Rule: finished worktree → merge into main, delete it, no PRs
+## Rule: finished worktree → merge into main, push, delete it, no PRs
 
-Small project, no review flow. When work in a worktree is done and checked, commit, merge the branch into local
-`main` (`git -C <repo root> merge <branch>`), then remove the worktree and branch. Do this without asking. **Never
-open a PR.** If the merge conflicts with uncommitted changes in the main checkout, stop and say so.
+Small project, no review flow. When work in a worktree is done and checked, do all of this without asking:
+commit in the worktree → leave it (ExitWorktree `keep`) → in the main checkout `git merge <branch>` →
+`git push origin main` → `git worktree remove <path>` and `git branch -d <branch>`. Don't push the worktree branch.
+**Never open a PR.** If the merge conflicts with uncommitted changes in the main checkout, stop and say so.
 
 ## Commands
 
