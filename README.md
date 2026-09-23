@@ -1,7 +1,9 @@
 # llm2jev
 
+[中文](https://github.com/tic-top/llm2jev/blob/main/README.zh-CN.md)
+
 Turn **any chat model** into a [Jev](https://docs.typesafe.ai/api)-compatible probability decision service, on
-**SGLang, vLLM or plain transformers**, with no model or engine changes.
+**SGLang, vLLM, plain transformers or MLX (Apple silicon)**, with no model or engine changes.
 
 ```
 state + question + ALL options  ──one prefill──▶  logprobs of the option labels at one position  ──▶  probabilities
@@ -24,6 +26,7 @@ aliases. The PyPI project named `anyjev` is a different project.
 ```bash
 pip install llm2jev              # client + server; the engine runs separately
 pip install "llm2jev[hf,vision]" # + in-process transformers backend (video and audio decoders included)
+pip install "llm2jev[mlx]"       # + in-process MLX backend (Apple silicon)
 
 # SGLang
 python -m sglang.launch_server --model-path Qwen/Qwen3.5-2B --port 30000
@@ -35,6 +38,9 @@ llm2jev --model Qwen/Qwen3.5-2B --backend vllm --url http://127.0.0.1:8000
 
 # transformers, in-process reference (slow, no prefix cache)
 llm2jev --model Qwen/Qwen3-0.6B --backend hf
+
+# MLX on Apple silicon, in-process (text only; HF ids or mlx-community quantized repos)
+llm2jev --model mlx-community/Qwen3-0.6B-4bit --backend mlx
 ```
 
 From Python, without the HTTP server:
@@ -113,6 +119,7 @@ question must agree on the argmax and stay within 0.03 in probability.
 | transformers | reference (Qwen3-0.6B, Qwen3.5-2B, Qwen2-Audio-7B) | reference (Qwen3.5-2B) | reference (Qwen3.5-2B) | reference (Qwen2-Audio-7B) |
 | SGLang 0.5.9 | parity ✓ Qwen3-0.6B, Qwen3.5-2B, Qwen2-Audio-7B | parity ✓ Qwen3.5-2B | parity ✓ Qwen3.5-2B ¹ | 30 s clips only ² |
 | vLLM 0.30.0 | parity ✓ Qwen3-0.6B, Qwen3.5-2B, Qwen2-Audio-7B | parity ✓ Qwen3.5-2B | parity ✓ Qwen3.5-2B | parity ✓ Qwen2-Audio-7B |
+| MLX (mlx-lm) | matches transformers ✓ Qwen3-0.6B ³ | – | – | – |
 
 ¹ Within tolerance, but not byte-identical. For Qwen3.5 video, SGLang drops the template's outer
 `<|vision_start|>…<|vision_end|>` around the per-frame blocks (2 tokens) that transformers and vLLM keep. It also
@@ -120,6 +127,7 @@ upscales small frames (128 px becomes about 320 px), so the parity clip is 320 p
 ² SGLang 0.5.9 runs the Qwen2-Audio encoder without the feature attention mask, so a clip shorter than Whisper's 30 s
 window attends to its zero padding. A 2 s clip is off by 0.20 in probability, and a 30 s clip matches. Use vLLM or
 transformers for audio.
+³ `test_mlx_matches_hf`, run on the mlx CPU build. No prefix cache: each question is a full prefill.
 
 Differences of 0.01–0.03 in probability are bf16 kernel noise; tokenization is identical. For SGLang,
 `--enable-fp32-lm-head` roughly halves the gap. vLLM sends text prompts to `/v1/completions`, and prompts with media

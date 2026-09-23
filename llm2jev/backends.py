@@ -160,4 +160,28 @@ class HF:
         return [float(logits[i]) for i in ids]
 
 
-BACKENDS = {"sglang": SGLang, "vllm": VLLM, "hf": HF}
+class MLX:
+    """In-process mlx-lm (Apple silicon): full-vocab log-softmax at the last prompt position. Text only, no prefix
+    cache. Takes HF ids (converted on load) or mlx-community quantized repos."""
+
+    def __init__(self, model, **_):
+        import mlx.core as mx
+        from mlx_lm import load
+        self.mx = mx
+        self.model, self.tok = load(model)
+        self.lock = threading.Lock()
+
+    def warm(self, prefix, images):
+        pass
+
+    def score(self, text, images, ids):
+        if images:
+            raise ValueError("the mlx backend takes text only")
+        mx = self.mx
+        tokens = self.tok.encode(text, add_special_tokens=False)
+        with self.lock:
+            logits = self.model(mx.array([tokens]))[0, -1].astype(mx.float32)
+            return (logits - mx.logsumexp(logits))[mx.array(ids)].tolist()
+
+
+BACKENDS = {"sglang": SGLang, "vllm": VLLM, "hf": HF, "mlx": MLX}
