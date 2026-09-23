@@ -128,7 +128,7 @@ def jevlm_options(question):
 
 
 def _render_jevlm(state, questions, labels):
-    msgs, images = state_messages(state)
+    _, images = state_messages(state)
     if images:
         raise ValueError("the jevlm prompt is text-only")
     prefix = f"State:\n{render_value(state)}\n\n"
