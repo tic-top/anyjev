@@ -1,6 +1,6 @@
 """python -m llm2jev --model Qwen/Qwen3.5-2B --backend sglang --url http://127.0.0.1:30000
 
-    POST /v1/systemone  {model?, state, questions: {id: {type, instructions, criteria}}} -> {id, model, answers}
+    POST /v1/systemone  {model?, state, questions: {id: {type, instructions, criteria}}} -> {id, model, answers, usage}
     GET  /v1/models     GET /health
 """
 import argparse
@@ -12,6 +12,11 @@ import requests
 
 from .backends import BACKENDS
 from .engine import LLM2Jev
+
+
+class Server(ThreadingHTTPServer):
+    request_queue_size = 1024  # listen backlog; the stdlib default of 5 resets connections under a burst of clients
+    daemon_threads = True
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -39,7 +44,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(404, {"error": "not found"})
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
-            answers = self.server.jev(body.get("state", ""), body.get("questions") or {})
+            answers, usage = self.server.jev.run(body.get("state", ""), body.get("questions") or {})
         except (ValueError, KeyError, TypeError, NotImplementedError) as exc:
             return self._send(422, {"error": str(exc)})
         except requests.HTTPError as exc:  # backend 400 = a request it cannot hold (e.g. over the context window): the client's problem
@@ -48,7 +53,7 @@ class Handler(BaseHTTPRequestHandler):
         except requests.RequestException as exc:
             return self._send(504, {"error": f"backend: {exc}"})
         self._send(200, {"id": f"jev-{uuid.uuid4().hex[:16]}", "model": body.get("model") or self.server.name,
-                         "answers": answers})
+                         "answers": answers, "usage": usage})
 
 
 def main():
@@ -67,7 +72,7 @@ def main():
     try:
         processor = AutoProcessor.from_pretrained(a.model)
         processor.apply_chat_template  # plain tokenizers come back from AutoProcessor too
-    except (OSError, ValueError, AttributeError):
+    except (OSError, ValueError, AttributeError, ImportError):  # ImportError: a VL processor without torchvision
         processor = AutoTokenizer.from_pretrained(a.model)
     backend = BACKENDS[a.backend](url=a.url, model=a.served_model_name or a.model)
     serve(LLM2Jev(processor, backend, a.temperature, a.prompt), a.served_model_name or a.model, a.host, a.port)
@@ -75,7 +80,7 @@ def main():
 
 def serve(jev, name, host="127.0.0.1", port=8080):
     """Blocking /v1/systemone server around an LLM2Jev instance (also used by projects that build their own LLM2Jev)."""
-    srv = ThreadingHTTPServer((host, port), Handler)
+    srv = Server((host, port), Handler)
     srv.jev, srv.name = jev, name
     print(f"llm2jev on http://{host}:{port}  model={name} prompt={jev.style} T={jev.T:.4f} labels={len(jev.labels)}", flush=True)
     srv.serve_forever()

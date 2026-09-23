@@ -1,5 +1,7 @@
-"""Backends return the logprobs of chosen token ids at the first generated position, for one prompt.
-Every backend does exactly one prefill per prompt and never samples a real answer."""
+"""Backends return the logprobs of chosen token ids at the first generated position, for one prompt, plus the number of
+prompt tokens the engine processed (-> the response's usage). Every backend does exactly one prefill per prompt and
+never samples a real answer. Engine backends also take every text prompt of a request in one call (`score_many`), so
+the engine, not llm2jev, schedules the questions."""
 import base64
 import io
 import math
@@ -38,16 +40,25 @@ class SGLang:
         body.update({f"{kind}_data": srcs for kind, srcs in _by_kind(images).items() if srcs})
         r = self.http.post(f"{self.url}/generate", json=body, timeout=self.timeout)
         r.raise_for_status()
-        out = r.json()
-        return (out[0] if isinstance(out, list) else out)["meta_info"]
+        return r.json()
+
+    @staticmethod
+    def _row(out, ids):
+        meta = (out[0] if isinstance(out, list) else out)["meta_info"]
+        got = {int(r[1]): r[0] for r in (meta.get("output_token_ids_logprobs") or [[]])[0]}
+        return _finite([got.get(i) for i in ids]), meta.get("prompt_tokens", 0)
 
     def warm(self, prefix, images):
         self._post(prefix, images, [0])
 
     def score(self, text, images, ids):
-        rows = (self._post(text, images, ids).get("output_token_ids_logprobs") or [[]])[0]
-        got = {int(r[1]): r[0] for r in rows}
-        return _finite([got.get(i) for i in ids])
+        return self._row(self._post(text, images, ids), ids)
+
+    def score_many(self, texts, ids):
+        """Text-only prompts in ONE /generate call: one round trip, admitted to the scheduler together.
+        -> (rows, total prompt tokens)"""
+        rows, ns = zip(*(self._row(o, ids) for o in self._post(texts, [], ids)))
+        return list(rows), sum(ns)
 
 
 class VLLM:
@@ -66,22 +77,35 @@ class VLLM:
         r.raise_for_status()
         return r.json()
 
-    def _post(self, text, ids):
-        out = self._json("/v1/completions", {"prompt": text, "max_tokens": 1, "temperature": 0.0, "logprobs": 1,
+    def _post(self, prompt, ids):
+        """prompt: a string or a list of strings -> (one row of label logprobs per prompt, prompt tokens)."""
+        out = self._json("/v1/completions", {"prompt": prompt, "max_tokens": 1, "temperature": 0.0, "logprobs": 1,
                                              "logprob_token_ids": ids, "add_special_tokens": False})
-        top = ((out["choices"][0].get("logprobs") or {}).get("top_logprobs") or [{}])[0] or {}
-        return [top.get(f"token_id:{i}") for i in ids]
+        rows = []
+        for c in sorted(out["choices"], key=lambda c: c.get("index", 0)):
+            top = ((c.get("logprobs") or {}).get("top_logprobs") or [{}])[0] or {}
+            rows.append([top.get(f"token_id:{i}") for i in ids])
+        return rows, (out.get("usage") or {}).get("prompt_tokens", 0)
+
+    def score_many(self, texts, ids):
+        """Text-only prompts in one /v1/completions call per label chunk. -> (rows, prompt tokens of one pass)"""
+        rows, n = [[] for _ in texts], 0
+        for i in range(0, len(ids), self.chunk):
+            parts, n = self._post(texts, ids[i:i + self.chunk])
+            for row, part in zip(rows, parts):
+                row += part
+        return [_finite(r) for r in rows], n
 
     def _post_media(self, tokens, parts, ids):
         out = self._json("/inference/v1/generate", {"token_ids": tokens, "content_parts": parts, "sampling_params": {
             "max_tokens": 1, "temperature": 0.0, "logprobs": len(ids), "logprob_token_ids": ids}})
         top = (out["choices"][0].get("logprobs") or {"content": [{}]})["content"][0].get("top_logprobs") or []
         got = {t["token"]: t["logprob"] for t in top}
-        return [got.get(f"token_id:{i}") for i in ids]
+        return [got.get(f"token_id:{i}") for i in ids], (out.get("usage") or {}).get("prompt_tokens", len(tokens))
 
     def _poster(self, text, images):
         if not images:
-            return lambda ids: self._post(text, ids)
+            return lambda ids: (lambda rows, n: (rows[0], n))(*self._post(text, ids))
         tokens = self._json("/tokenize", {"prompt": text, "add_special_tokens": False})["tokens"]
         parts = [{"type": f"{kind}_url", "url": _uri(s)} for kind, srcs in _by_kind(images).items() for s in srcs]
         return lambda ids: self._post_media(tokens, parts, ids)
@@ -91,7 +115,11 @@ class VLLM:
 
     def score(self, text, images, ids):
         post = self._poster(text, images)
-        return _finite([x for i in range(0, len(ids), self.chunk) for x in post(ids[i:i + self.chunk])])
+        row, n = [], 0
+        for i in range(0, len(ids), self.chunk):  # in turn: a repeat of the same prompt then hits the prefix cache
+            part, n = post(ids[i:i + self.chunk])
+            row += part
+        return _finite(row), n
 
 
 def _uri(src):
@@ -157,7 +185,7 @@ class HF:
         inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
         with self.lock, torch.no_grad():
             logits = self.model(**inputs).logits[0, -1].float().log_softmax(-1)
-        return [float(logits[i]) for i in ids]
+        return [float(logits[i]) for i in ids], int(inputs["input_ids"].shape[1])
 
 
 class MLX:
@@ -181,7 +209,7 @@ class MLX:
         tokens = self.tok.encode(text, add_special_tokens=False)
         with self.lock:
             logits = self.model(mx.array([tokens]))[0, -1].astype(mx.float32)
-            return (logits - mx.logsumexp(logits))[mx.array(ids)].tolist()
+            return (logits - mx.logsumexp(logits))[mx.array(ids)].tolist(), len(tokens)
 
 
 BACKENDS = {"sglang": SGLang, "vllm": VLLM, "hf": HF, "mlx": MLX}

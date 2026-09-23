@@ -93,8 +93,16 @@ def render(processor, state, questions, labels, style="chat"):
         raise ValueError(f"unknown prompt style {style!r}")
     marker = f"LLM2JEV_{uuid.uuid4().hex}"
     msgs, images = state_messages(state)
-    msgs = msgs + [{"role": "user", "content": INSTRUCTION + "\n\n" + marker}]
-    text = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    ask = INSTRUCTION + "\n\n" + marker
+    kw = dict(tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    try:
+        text = processor.apply_chat_template(msgs + [{"role": "user", "content": ask}], **kw)
+    except Exception:  # templates that demand strict user/assistant alternation (Gemma): fold the ask into the last user turn
+        if not msgs or msgs[-1]["role"] != "user":
+            raise
+        last = msgs[-1]["content"]
+        last = last + [{"type": "text", "text": "\n\n" + ask}] if isinstance(last, list) else f"{last}\n\n{ask}"
+        text = processor.apply_chat_template(msgs[:-1] + [{**msgs[-1], "content": last}], **kw)
     if text.count(marker) != 1:
         raise ValueError("chat template dropped or duplicated the question slot")
     prefix, ending = text.split(marker)

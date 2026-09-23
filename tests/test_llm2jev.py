@@ -33,7 +33,7 @@ class Fake:
 
     def score(self, text, images, ids):
         self.calls.append((text, ids))
-        return [-float(i) for i in range(len(ids))]
+        return [-float(i) for i in range(len(ids))], 10
 
 
 @pytest.fixture(scope="module")
@@ -118,8 +118,8 @@ def test_hf_text_sees_all_options(tok):
     q = lambda opts: {"q": {"type": "choice", "instructions": "What color is the sky?", "criteria": dict.fromkeys(opts)}}
     _, a, _ = render(tok, "The sky is blue.", q(["red", "green", "none of the above"]), jev.labels)
     _, b, _ = render(tok, "The sky is blue.", q(["red", "blue", "none of the above"]), jev.labels)
-    la = jev.backend.score(a["q"][0], [], jev.ids[:3])
-    lb = jev.backend.score(b["q"][0], [], jev.ids[:3])
+    la = jev.backend.score(a["q"][0], [], jev.ids[:3])[0]
+    lb = jev.backend.score(b["q"][0], [], jev.ids[:3])[0]
     assert abs(la[0] - lb[0]) > 1e-3  # option A's raw logit moved when only option B changed
     # Qwen3-0.6B zero-shot prefers "none of the above" here in every prompt ending tried (labels hold ~99% of the
     # next-token mass), so the accuracy check uses plain options: a model limit, not a readout bug.
@@ -185,10 +185,8 @@ def test_backend_400_is_422_and_outage_is_504(tok):
     import threading
     import urllib.error
     import urllib.request
-    from http.server import ThreadingHTTPServer
-
     import requests
-    from llm2jev.__main__ import Handler
+    from llm2jev.__main__ import Handler, Server
 
     class Failing(Fake):
         def score(self, text, images, ids):
@@ -199,7 +197,7 @@ def test_backend_400_is_422_and_outage_is_504(tok):
     def post(code):
         fake = Failing()
         fake.code = code
-        srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        srv = Server(("127.0.0.1", 0), Handler)
         srv.jev, srv.name = LLM2Jev(tok, fake), "m"
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         body = json.dumps({"state": "x", "questions": {"q": {"type": "noul"}}}).encode()
@@ -211,3 +209,37 @@ def test_backend_400_is_422_and_outage_is_504(tok):
             srv.shutdown()
 
     assert post(400) == 422 and post(503) == 504
+
+
+def test_strict_alternation_template_gets_question_in_last_user_turn(tok):
+    class Strict:  # Gemma-style template: consecutive user turns raise
+        def apply_chat_template(self, msgs, **kw):
+            if any(a["role"] == b["role"] for a, b in zip(msgs, msgs[1:])):
+                raise ValueError("Conversation roles must alternate")
+            return tok.apply_chat_template(msgs, **kw)
+    prefix, prompts, _ = render(Strict(), STATE, QUESTIONS, ["A", "B", "C"])
+    text = prompts["refund"][0]
+    assert text.startswith(prefix) and text.count("<|im_start|>user") == 1
+    assert "refund the duplicate.\n\nEvaluate the conversation" in text
+
+
+def test_batched_backend_gets_one_call_and_same_answers(tok):
+    class Batch(Fake):
+        def score_many(self, texts, ids):
+            self.batches = getattr(self, "batches", 0) + 1
+            return [self.score(t, [], ids)[0] for t in texts], 10 * len(texts)
+    plain, batch = Fake(), Batch()
+    assert LLM2Jev(tok, batch)(STATE, QUESTIONS) == LLM2Jev(tok, plain)(STATE, QUESTIONS)
+    assert batch.batches == 1 and len(batch.warms) == 1
+    assert {len(ids) for _, ids in batch.calls} == {3}  # the batch asks for the widest label set, sliced per question
+
+
+def test_usage_counts_engine_prompt_tokens(tok):
+    jev = LLM2Jev(tok, Fake())
+    assert jev.run(STATE, QUESTIONS)[1] == {"input_tokens": 30, "output_tokens": 3}
+    assert jev.run(STATE, {"refund": QUESTIONS["refund"]})[1] == {"input_tokens": 10, "output_tokens": 1}
+
+
+def test_server_takes_a_burst_of_connections():
+    from llm2jev.__main__ import Server
+    assert Server.request_queue_size >= 256  # the stdlib default of 5 reset connections at 64 concurrent clients
