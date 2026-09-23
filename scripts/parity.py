@@ -126,9 +126,9 @@ def main():
         for qid, (text, keys) in prompts.items():
             k = ids[:len(keys)]
             t0 = time.perf_counter()
-            le = engine.score(text, images, k)
+            le = engine.score(text, images, k)[0]
             ms = (time.perf_counter() - t0) * 1e3
-            lr = ref.score(text, images, k)
+            lr = ref.score(text, images, k)[0]
             pe, pr = softmax(le), softmax(lr)
             dl = max(abs(x - y) for x, y in zip(le, lr))
             dp = max(abs(x - y) for x, y in zip(pe, pr))
