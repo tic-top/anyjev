@@ -9,7 +9,7 @@ Any run that touches a model (server, parity, bench, eval, sampling, a one-off e
 show up in the first few lines. Collecting everything and printing it only at the very end is **not allowed**.
 
 - `print(..., flush=True)` or `python -u`. Redirected stdout is block-buffered, so an unflushed print reaches the log
-  file only when the process exits. (`scripts/parity.py` prints a row per question but does not flush yet.)
+  file only when the process exits. `scripts/parity.py` sets `sys.stdout.reconfigure(line_buffering=True)`.
 - Long runs go to a log file (`> run.log 2>&1`, as in `scripts/bench.sh`) and get checked after the first few
   lines appear, not after the run finishes.
 - Log the numbers you will judge the run by (per-question probs/argmax, ms, errors). "done" alone doesn't count.

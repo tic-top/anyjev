@@ -108,6 +108,8 @@ def main():
     ap.add_argument("--tol", type=float, default=0.03,
                     help="max allowed probability difference; bf16 engine kernels differ from HF by up to ~0.03")
     a = ap.parse_args()
+    sys.stdout.reconfigure(line_buffering=True)  # rows reach a redirected log as they are scored, not at exit
+    print(f"parity model={a.model} backend={a.backend} url={a.url} dtype={a.dtype} tol={a.tol}")
 
     ref = HF(a.model, device=a.device, dtype=a.dtype)
     processor = ref.processor or ref.tok
