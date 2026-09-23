@@ -1,6 +1,6 @@
 [project]
 name = "llm2jev"
-version = "0.1.0"
+version = "0.1.1"
 description = "Any chat model, any engine (SGLang, vLLM, transformers) as a Jev-compatible probability decision service"
 readme = "README.md"
 license = "MIT"
