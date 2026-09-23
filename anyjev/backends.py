@@ -3,6 +3,7 @@ Every backend does exactly one prefill per prompt and never samples a real answe
 import base64
 import io
 import math
+import mimetypes
 import os
 
 import requests
@@ -42,31 +43,54 @@ class SGLang:
 class VLLM:
     """vLLM OpenAI /v1/completions with max_tokens=1 + logprob_token_ids (text prompts).
     Serve with --max-logprobs 256 --return-tokens-as-token-ids. Stock vLLM caps logprob_token_ids per request,
-    so large label sets are split into chunks of the SAME prompt (the prefix cache makes repeats cheap)."""
+    so large label sets are split into chunks of the SAME prompt (the prefix cache makes repeats cheap).
+    Prompts with images go to the tokens-in endpoint /inference/v1/generate (serve with --enable-scale-out): the
+    completions API takes no media, and the chat API would re-render the prompt with its own template."""
 
     def __init__(self, url, model, timeout=120, chunk=128, **_):
         self.url, self.model, self.timeout, self.chunk = url.rstrip("/"), model, timeout, chunk
         self.http = requests.Session()
 
-    def _post(self, text, ids):
-        r = self.http.post(f"{self.url}/v1/completions", timeout=self.timeout, json={
-            "model": self.model, "prompt": text, "max_tokens": 1, "temperature": 0.0, "logprobs": 1,
-            "logprob_token_ids": ids, "add_special_tokens": False})
+    def _json(self, path, body):
+        r = self.http.post(f"{self.url}{path}", json={"model": self.model, **body}, timeout=self.timeout)
         r.raise_for_status()
-        top = ((r.json()["choices"][0].get("logprobs") or {}).get("top_logprobs") or [{}])[0] or {}
+        return r.json()
+
+    def _post(self, text, ids):
+        out = self._json("/v1/completions", {"prompt": text, "max_tokens": 1, "temperature": 0.0, "logprobs": 1,
+                                             "logprob_token_ids": ids, "add_special_tokens": False})
+        top = ((out["choices"][0].get("logprobs") or {}).get("top_logprobs") or [{}])[0] or {}
         return [top.get(f"token_id:{i}") for i in ids]
 
-    def warm(self, prefix, images):
+    def _post_media(self, tokens, parts, ids):
+        out = self._json("/inference/v1/generate", {"token_ids": tokens, "content_parts": parts, "sampling_params": {
+            "max_tokens": 1, "temperature": 0.0, "logprobs": len(ids), "logprob_token_ids": ids}})
+        top = (out["choices"][0].get("logprobs") or {"content": [{}]})["content"][0].get("top_logprobs") or []
+        got = {t["token"]: t["logprob"] for t in top}
+        return [got.get(f"token_id:{i}") for i in ids]
+
+    def _poster(self, text, images):
         if not images:
-            self._post(prefix, [0])
+            return lambda ids: self._post(text, ids)
+        tokens = self._json("/tokenize", {"prompt": text, "add_special_tokens": False})["tokens"]
+        parts = [{"type": "image_url", "url": _uri(s)} for s in images]
+        return lambda ids: self._post_media(tokens, parts, ids)
+
+    def warm(self, prefix, images):
+        self._poster(prefix, images)([0])
 
     def score(self, text, images, ids):
-        if images:  # ponytail: vLLM multimodal needs the chat endpoint or multi_modal_data; add once it is tested
-            raise NotImplementedError("image input on the vLLM backend is not implemented yet; use sglang or hf")
-        out = []
-        for i in range(0, len(ids), self.chunk):
-            out += self._post(text, ids[i:i + self.chunk])
-        return _finite(out)
+        post = self._poster(text, images)
+        return _finite([x for i in range(0, len(ids), self.chunk) for x in post(ids[i:i + self.chunk])])
+
+
+def _uri(src):
+    """Local paths become data: URIs, so the engine never needs filesystem access; URLs pass through."""
+    if src.startswith(("data:", "http://", "https://")):
+        return src
+    path = os.path.expanduser(src)
+    with open(path, "rb") as f:
+        return f"data:{mimetypes.guess_type(path)[0] or 'application/octet-stream'};base64,{base64.b64encode(f.read()).decode()}"
 
 
 def _load_image(src):

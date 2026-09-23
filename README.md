@@ -12,7 +12,7 @@ state + question + ALL options  ──one prefill──▶  logprobs of the opti
 - **Standard chat template, thinking off.** Works with instruct models zero-shot; fine-tuned checkpoints use the same prompt.
 - **Shared prefix, rendered once.** Every question of a request starts with byte-identical text, the prefix is warmed
   once, and the engine's prefix cache (SGLang radix / vLLM APC) serves the rest.
-- **Images in the state** (SGLang and transformers backends) for multimodal models.
+- **Images in the state** (SGLang, vLLM and transformers backends) for multimodal models.
 
 AnyJev is an independent implementation of the documented System One wire format. It is not affiliated with TypeSafe.
 
@@ -26,9 +26,9 @@ pip install "anyjev[hf,vision] @ git+https://github.com/tic-top/anyjev" # + in-p
 python -m sglang.launch_server --model-path Qwen/Qwen3.5-2B --port 30000
 anyjev --model Qwen/Qwen3.5-2B --backend sglang --url http://127.0.0.1:30000
 
-# vLLM (text only for now)
-vllm serve Qwen/Qwen3-0.6B --max-logprobs 256 --return-tokens-as-token-ids --port 8000
-anyjev --model Qwen/Qwen3-0.6B --backend vllm --url http://127.0.0.1:8000
+# vLLM (--enable-scale-out opens the tokens-in endpoint used for images)
+vllm serve Qwen/Qwen3.5-2B --max-logprobs 256 --return-tokens-as-token-ids --enable-scale-out --port 8000
+anyjev --model Qwen/Qwen3.5-2B --backend vllm --url http://127.0.0.1:8000
 
 # transformers, in-process reference (slow, no prefix cache)
 anyjev --model Qwen/Qwen3-0.6B --backend hf
@@ -107,10 +107,11 @@ question must agree on the argmax and stay within 0.03 in probability.
 |---|---|---|
 | transformers | reference (Qwen3-0.6B, Qwen3.5-2B) | reference (Qwen3.5-2B) |
 | SGLang 0.5.9 | parity ✓ Qwen3-0.6B, Qwen3.5-2B | parity ✓ Qwen3.5-2B |
-| vLLM 0.30.0 | parity ✓ Qwen3-0.6B | not yet |
+| vLLM 0.30.0 | parity ✓ Qwen3-0.6B, Qwen3.5-2B | parity ✓ Qwen3.5-2B |
 
 Differences of 0.01–0.03 in probability are bf16 kernel noise; tokenization is identical. For SGLang,
-`--enable-fp32-lm-head` roughly halves the gap. Audio and video parts are not supported yet. Models that cannot switch
+`--enable-fp32-lm-head` roughly halves the gap. vLLM sends text prompts to `/v1/completions`, and prompts with images
+as exact token ids plus the images to `/inference/v1/generate`, so both engines score the same bytes. Audio and video parts are not supported yet. Models that cannot switch
 thinking off need a template that closes the think block.
 
 ```bash
