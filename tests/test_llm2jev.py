@@ -129,6 +129,16 @@ def test_hf_text_sees_all_options(tok):
 
 
 @slow
+def test_mlx_matches_hf(tok):
+    pytest.importorskip("mlx_lm")
+    from llm2jev.backends import MLX
+    got = LLM2Jev(tok, MLX(TEXT_MODEL))(STATE, QUESTIONS)
+    ref = LLM2Jev(tok, HF(TEXT_MODEL, dtype="float32"))(STATE, QUESTIONS)
+    assert got["department"]["choice"] == ref["department"]["choice"]
+    assert got["refund"]["noul"] == pytest.approx(ref["refund"]["noul"], abs=0.03)
+
+
+@slow
 def test_hf_image_question(tmp_path):
     from PIL import Image
     from transformers import AutoProcessor

@@ -1,7 +1,7 @@
 [project]
 name = "llm2jev"
 version = "0.4.0"
-description = "Any chat model, any engine (SGLang, vLLM, transformers) as a Jev-compatible probability decision service"
+description = "Any chat model, any engine (SGLang, vLLM, transformers, MLX) as a Jev-compatible probability decision service"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
@@ -13,6 +13,7 @@ Repository = "https://github.com/tic-top/llm2jev"
 [project.optional-dependencies]
 hf = ["torch", "pillow", "accelerate", "av", "librosa"]  # av: video frames, librosa: audio
 vision = ["torchvision", "pillow"]
+mlx = ["mlx-lm"]  # Apple silicon
 test = ["pytest"]
 
 [project.scripts]
