@@ -80,6 +80,15 @@ def test_image_parts_become_placeholders(tok):
     assert images == ["data:x"] and prompts["q"][0].count("<|image_pad|>") == 1
 
 
+def test_jevlm_style_is_the_raw_letters_prompt(tok):
+    jev = AnyJev(tok, Fake(), style="jevlm")
+    _, prompts, _ = render(tok, "The sky is blue.", QUESTIONS, jev.labels, "jevlm")
+    assert prompts["refund"][0] == ("State:\nThe sky is blue.\n\nQuestion: Does the user request a refund?\nOptions:\n"
+                                    "A. false: No\nB. true: Yes\nAnswer with the letter of the best option.\nAnswer:")
+    assert prompts["refund"][1] == ["false", "true"] and jev.labels[:2] == ["A", "B"]
+    assert "A. 0: Routine\nB. 1: Urgent\nC. 2: Emergency\n" in prompts["urgency"][0]
+
+
 def _cpu_friendly():
     """Qwen3.5 linear-attention layers default to CUDA-only kernels; use transformers' torch fallbacks on CPU."""
     import torch

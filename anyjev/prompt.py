@@ -6,7 +6,6 @@ where the question goes, so the prefix text is byte-identical across questions a
 (SGLang radix / vLLM APC) can reuse it.
 """
 import itertools
-import json
 import string
 import uuid
 
@@ -32,7 +31,7 @@ def render_value(value, indent=0):
             body = render_value(v, indent + 1)
             out.append(f"{pad}-\n{body}" if "\n" in body else f"{pad}- {body.strip()}")
         return "\n".join(out)
-    return f"{pad}{json.dumps(value)}"
+    return f"{pad}{value}"
 
 
 def _media(part, images):
@@ -82,8 +81,14 @@ def options_of(question):
     raise ValueError(f"unknown question type {typ!r}")
 
 
-def render(processor, state, questions, labels):
-    """-> (prefix text, {qid: (full prompt text, answer keys)}, images). `processor` is a tokenizer or an HF processor."""
+def render(processor, state, questions, labels, style="chat"):
+    """-> (prefix text, {qid: (full prompt text, answer keys)}, images). `processor` is a tokenizer or an HF processor.
+    style="chat": the model's chat template, thinking off (default, works zero-shot).
+    style="jevlm": the raw prompt baby-jev letters checkpoints were trained on, byte for byte."""
+    if style == "jevlm":
+        return _render_jevlm(state, questions, labels)
+    if style != "chat":
+        raise ValueError(f"unknown prompt style {style!r}")
     marker = f"ANYJEV_{uuid.uuid4().hex}"
     msgs, images = state_messages(state)
     msgs = msgs + [{"role": "user", "content": INSTRUCTION + "\n\n" + marker}]
@@ -97,6 +102,32 @@ def render(processor, state, questions, labels):
         head = render_value(q["instructions"]) if q.get("instructions") is not None else DEFAULT_QUESTION
         lines = "".join(f"{labels[i]}. {t}\n" for i, t in enumerate(texts))
         out[qid] = (f"{prefix}Question: {head}\nOptions:\n{lines.rstrip()}{ending}{ANSWER}", keys)
+    return prefix, out, images
+
+
+JEVLM_SUFFIX = "Answer with the letter of the best option.\nAnswer:"
+
+
+def jevlm_options(question):
+    """Option texts exactly as baby-jev records store them: noul false first, 'key: description', 'i: level'."""
+    typ, crit = question.get("type"), question.get("criteria")
+    if typ == "noul":
+        crit = crit or {}
+        return ["false", "true"], [f"false: {crit.get('false', 'No')}", f"true: {crit.get('true', 'Yes')}"]
+    return options_of(question)
+
+
+def _render_jevlm(state, questions, labels):
+    msgs, images = state_messages(state)
+    if images:
+        raise ValueError("the jevlm prompt is text-only")
+    prefix = f"State:\n{render_value(state)}\n\n"
+    out = {}
+    for qid, q in questions.items():
+        keys, texts = jevlm_options(q)
+        head = render_value(q.get("instructions") or DEFAULT_QUESTION)
+        lines = "".join(f"{labels[i]}. {t}\n" for i, t in enumerate(texts))
+        out[qid] = (f"{prefix}Question: {head}\nOptions:\n{lines}{JEVLM_SUFFIX}", keys)
     return prefix, out, images
 
 

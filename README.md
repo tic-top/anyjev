@@ -89,14 +89,28 @@ need calibrated probabilities.
 
 ## Status
 
-| | text | image |
-|---|---|---|
-| transformers | tested (Qwen3-0.6B, CPU) | tested (Qwen3.5-2B, CPU) |
-| SGLang | implemented, engine parity test pending | implemented, pending |
-| vLLM | implemented, pending | not yet |
+Parity = `scripts/parity.py`: the engine and the transformers reference score the same rendered prompts. Every
+question must agree on the argmax and stay within 0.03 in probability.
 
-Audio and video parts are not supported yet. Models that cannot switch thinking off need a template that closes the
-think block.
+| backend | text | image |
+|---|---|---|
+| transformers | reference (Qwen3-0.6B, Qwen3.5-2B) | reference (Qwen3.5-2B) |
+| SGLang 0.5.9 | parity ✓ Qwen3-0.6B, Qwen3.5-2B | parity ✓ Qwen3.5-2B |
+| vLLM 0.30.0 | parity ✓ Qwen3-0.6B | not yet |
+
+Differences of 0.01–0.03 in probability are bf16 kernel noise; tokenization is identical. For SGLang,
+`--enable-fp32-lm-head` roughly halves the gap. Audio and video parts are not supported yet. Models that cannot switch
+thinking off need a template that closes the think block.
+
+```bash
+python scripts/parity.py --model Qwen/Qwen3.5-2B --backend sglang --url http://127.0.0.1:30000
+```
+
+### Prompt styles
+
+`--prompt chat` (default) uses the model's chat template, with thinking off. `--prompt jevlm` uses the raw
+`State: … Answer with the letter of the best option.\nAnswer:` prompt that baby-jev letters checkpoints were trained
+on, so those checkpoints can be served without retraining.
 
 ## Tests
 

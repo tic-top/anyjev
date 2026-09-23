@@ -55,6 +55,8 @@ def main():
     ap.add_argument("--url", default="http://127.0.0.1:30000", help="engine base URL (sglang / vllm)")
     ap.add_argument("--served-model-name", help="model name the vLLM server was started with (default: --model)")
     ap.add_argument("--temperature", type=float, default=1.0, help="softmax temperature over label logprobs")
+    ap.add_argument("--prompt", choices=["chat", "jevlm"], default="chat",
+                    help="chat: model chat template, thinking off. jevlm: raw prompt of baby-jev letters checkpoints")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8080)
     a = ap.parse_args()
@@ -66,7 +68,7 @@ def main():
         processor = AutoTokenizer.from_pretrained(a.model)
     backend = BACKENDS[a.backend](url=a.url, model=a.served_model_name or a.model)
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
-    srv.jev, srv.name = AnyJev(processor, backend, a.temperature), a.served_model_name or a.model
+    srv.jev, srv.name = AnyJev(processor, backend, a.temperature, a.prompt), a.served_model_name or a.model
     print(f"anyjev on http://{a.host}:{a.port}  model={a.model} backend={a.backend} labels={len(srv.jev.labels)}", flush=True)
     srv.serve_forever()
 
