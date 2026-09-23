@@ -18,8 +18,7 @@ state + question + ALL options  ──one prefill──▶  logprobs of the opti
 
 llm2jev is an independent implementation of the documented System One wire format. It is not affiliated with TypeSafe.
 
-It was called AnyJev before. `import anyjev`, `from anyjev import AnyJev` and the `anyjev` command still work as
-aliases. The PyPI project named `anyjev` is a different project.
+It was called AnyJev before 0.5.0.
 
 ## Quick start
 

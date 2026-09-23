@@ -180,16 +180,6 @@ def test_hf_audio_question(tmp_path):
     assert out["q"]["choice"] == "a steady electronic beep", out
 
 
-def test_old_anyjev_imports_still_work():
-    from anyjev import AnyJev
-    from anyjev.__main__ import serve
-    from anyjev.backends import BACKENDS as old
-    from anyjev.prompt import find_labels, render as old_render
-    import llm2jev.backends
-    import llm2jev.prompt
-    assert AnyJev is LLM2Jev and old is llm2jev.backends.BACKENDS and old_render is llm2jev.prompt.render and serve
-
-
 def test_backend_400_is_422_and_outage_is_504(tok):
     import json
     import threading

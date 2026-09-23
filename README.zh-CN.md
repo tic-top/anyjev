@@ -18,8 +18,7 @@
 
 llm2jev 是对公开文档中 System One 通信格式的独立实现，与 TypeSafe 没有关联。
 
-它以前叫 AnyJev。`import anyjev`、`from anyjev import AnyJev` 以及 `anyjev` 命令仍作为别名可用。
-PyPI 上名为 `anyjev` 的是另一个项目。
+它在 0.5.0 之前叫 AnyJev。
 
 ## 快速开始
 
