@@ -178,3 +178,36 @@ def test_old_anyjev_imports_still_work():
     import llm2jev.backends
     import llm2jev.prompt
     assert AnyJev is LLM2Jev and old is llm2jev.backends.BACKENDS and old_render is llm2jev.prompt.render and serve
+
+
+def test_backend_400_is_422_and_outage_is_504(tok):
+    import json
+    import threading
+    import urllib.error
+    import urllib.request
+    from http.server import ThreadingHTTPServer
+
+    import requests
+    from llm2jev.__main__ import Handler
+
+    class Failing(Fake):
+        def score(self, text, images, ids):
+            r = requests.Response()
+            r.status_code, r._content = self.code, b"prompt too long"
+            r.raise_for_status()
+
+    def post(code):
+        fake = Failing()
+        fake.code = code
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        srv.jev, srv.name = LLM2Jev(tok, fake), "m"
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        body = json.dumps({"state": "x", "questions": {"q": {"type": "noul"}}}).encode()
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{srv.server_port}/v1/systemone", body)
+        except urllib.error.HTTPError as e:
+            return e.code
+        finally:
+            srv.shutdown()
+
+    assert post(400) == 422 and post(503) == 504

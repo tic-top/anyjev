@@ -42,6 +42,9 @@ class Handler(BaseHTTPRequestHandler):
             answers = self.server.jev(body.get("state", ""), body.get("questions") or {})
         except (ValueError, KeyError, TypeError, NotImplementedError) as exc:
             return self._send(422, {"error": str(exc)})
+        except requests.HTTPError as exc:  # backend 400 = a request it cannot hold (e.g. over the context window): the client's problem
+            code = 422 if exc.response is not None and exc.response.status_code == 400 else 504
+            return self._send(code, {"error": f"backend: {exc.response.text if exc.response is not None else exc}"})
         except requests.RequestException as exc:
             return self._send(504, {"error": f"backend: {exc}"})
         self._send(200, {"id": f"jev-{uuid.uuid4().hex[:16]}", "model": body.get("model") or self.server.name,
