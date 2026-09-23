@@ -17,9 +17,9 @@ import tempfile
 import time
 import wave
 
-from anyjev.backends import BACKENDS, HF
-from anyjev.prompt import find_labels, render
-from anyjev.scoring import softmax
+from llm2jev.backends import BACKENDS, HF
+from llm2jev.prompt import find_labels, render
+from llm2jev.scoring import softmax
 
 STATE = [{"role": "system", "content": "You are a support assistant."},
          {"role": "user", "content": "I was charged twice. Please refund the duplicate."}]

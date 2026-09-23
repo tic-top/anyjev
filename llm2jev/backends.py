@@ -130,7 +130,7 @@ class HF:
         self.model = cls.from_pretrained(model, dtype=getattr(torch, dtype)).to(self.device).eval()
         self.processor = AutoProcessor.from_pretrained(model) if multimodal else None
         self.tok = AutoTokenizer.from_pretrained(model)
-        self.lock = threading.Lock()  # AnyJev scores from worker threads; one in-process model runs one forward at a time
+        self.lock = threading.Lock()  # LLM2Jev scores from worker threads; one in-process model runs one forward at a time
 
     def warm(self, prefix, images):
         pass

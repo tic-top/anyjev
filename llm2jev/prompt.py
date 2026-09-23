@@ -91,7 +91,7 @@ def render(processor, state, questions, labels, style="chat"):
         return _render_jevlm(state, questions, labels)
     if style != "chat":
         raise ValueError(f"unknown prompt style {style!r}")
-    marker = f"ANYJEV_{uuid.uuid4().hex}"
+    marker = f"LLM2JEV_{uuid.uuid4().hex}"
     msgs, images = state_messages(state)
     msgs = msgs + [{"role": "user", "content": INSTRUCTION + "\n\n" + marker}]
     text = processor.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True, enable_thinking=False)
