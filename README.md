@@ -115,9 +115,11 @@ question must agree on the argmax and stay within 0.03 in probability.
 
 | backend | text | image | video | audio |
 |---|---|---|---|---|
-| transformers | reference (Qwen3-0.6B, Qwen3.5-2B, Qwen2-Audio-7B) | reference (Qwen3.5-2B) | reference (Qwen3.5-2B) | reference (Qwen2-Audio-7B) |
+| transformers | reference (Qwen3-0.6B, Qwen3.5-2B, Qwen3.6-27B, Qwen3.6-35B-A3B, Qwen3.8-27B, Qwen2-Audio-7B) | reference (Qwen3.5-2B, Qwen3.6-27B, Qwen3.6-35B-A3B, Qwen3.8-27B) | reference (Qwen3.5-2B, Qwen3.6-27B, Qwen3.6-35B-A3B, Qwen3.8-27B) ⁶ | reference (Qwen2-Audio-7B) |
+| SGLang 0.5.18 | parity ✓ Qwen3.6-27B, Qwen3.6-35B-A3B, Qwen3.8-27B ⁴ | parity ✓ Qwen3.6-27B, Qwen3.6-35B-A3B, Qwen3.8-27B | parity ✓ Qwen3.6-27B, Qwen3.6-35B-A3B, Qwen3.8-27B | – |
 | SGLang 0.5.9 | parity ✓ Qwen3-0.6B, Qwen3.5-2B, Qwen2-Audio-7B | parity ✓ Qwen3.5-2B | parity ✓ Qwen3.5-2B ¹ | 30 s clips only ² |
 | vLLM 0.30.0 | parity ✓ Qwen3-0.6B, Qwen3.5-2B, Qwen2-Audio-7B | parity ✓ Qwen3.5-2B | parity ✓ Qwen3.5-2B | parity ✓ Qwen2-Audio-7B |
+| vLLM 0.26.0 | parity ✓ Qwen3.6-27B, Qwen3.6-35B-A3B ⁴ | ✗ ⁵ | ✗ ⁵ | – |
 | MLX (mlx-lm) | matches transformers ✓ Qwen3-0.6B ³ | – | – | – |
 
 ¹ Within tolerance, but not byte-identical. For Qwen3.5 video, SGLang drops the template's outer
@@ -127,6 +129,13 @@ upscales small frames (128 px becomes about 320 px), so the parity clip is 320 p
 window attends to its zero padding. A 2 s clip is off by 0.20 in probability, and a 30 s clip matches. Use vLLM or
 transformers for audio.
 ³ `test_mlx_matches_hf`, run on the mlx CPU build. No prefix cache: each question is a full prefill.
+⁴ Qwen3.6 (27B dense, 35B-A3B MoE), TP 2 and TP 4. SGLang 0.5.9 loads Qwen3.6 but scores it wrong (off by up to 0.8
+in probability on text), so use 0.5.18. On 35B-A3B every argmax agrees, but one near-tie question (0.77 vs 0.22)
+differs by 0.05 between any two of SGLang, vLLM and transformers. That is bf16 MoE routing noise, so run MoE parity
+with `--tol 0.06`. Qwen3.8-27B passes with `--enable-fp32-lm-head` (bf16 head: 0.031 on one question).
+⁵ vLLM 0.26 accepts `content_parts` on `/inference/v1/generate` but ignores the media. Use vLLM 0.30+ for media.
+⁶ transformers 5 decodes video with torchcodec and falls back to `torchvision.io.read_video`, which torchvision 0.26
+removed. Install the torchcodec release that matches your torch (0.11 for torch 2.11).
 
 Differences of 0.01–0.03 in probability are bf16 kernel noise; tokenization is identical. For SGLang,
 `--enable-fp32-lm-head` roughly halves the gap. vLLM sends text prompts to `/v1/completions`, and prompts with media
