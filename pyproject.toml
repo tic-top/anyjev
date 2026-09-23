@@ -7,6 +7,9 @@ license = "MIT"
 requires-python = ">=3.10"
 dependencies = ["requests", "transformers>=4.51", "jinja2"]  # jinja2: chat templates
 
+[project.urls]
+Repository = "https://github.com/tic-top/anyjev"
+
 [project.optional-dependencies]
 hf = ["torch", "pillow", "accelerate", "av", "librosa"]  # av: video frames, librosa: audio
 vision = ["torchvision", "pillow"]
