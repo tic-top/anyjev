@@ -1,0 +1,122 @@
+"""Fast tests use a fake backend and a real tokenizer. ANYJEV_SLOW=1 also runs real models through the HF backend
+(CPU is fine): Qwen3-0.6B for text, Qwen3.5-2B for an image question."""
+import math
+import os
+
+import pytest
+from transformers import AutoTokenizer
+
+from anyjev import AnyJev
+from anyjev.backends import HF
+from anyjev.prompt import render
+
+TEXT_MODEL, VL_MODEL = "Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B"
+slow = pytest.mark.skipif(not os.environ.get("ANYJEV_SLOW"), reason="set ANYJEV_SLOW=1 to run real models")
+STATE = [{"role": "system", "content": "You are a support assistant."},
+         {"role": "user", "content": "I was charged twice. Please refund the duplicate."}]
+QUESTIONS = {
+    "refund": {"type": "noul", "instructions": "Does the user request a refund?"},
+    "department": {"type": "choice", "instructions": "Which department should handle this?",
+                   "criteria": {"billing": "Payments and refunds", "technical": "Software bugs"}},
+    "urgency": {"type": "score", "instructions": "How urgent is the request?", "criteria": ["Routine", "Urgent", "Emergency"]},
+}
+
+
+class Fake:
+    """Returns fixed logprobs; records what it was asked."""
+
+    def __init__(self):
+        self.calls, self.warms = [], []
+
+    def warm(self, prefix, images):
+        self.warms.append(prefix)
+
+    def score(self, text, images, ids):
+        self.calls.append((text, ids))
+        return [-float(i) for i in range(len(ids))]
+
+
+@pytest.fixture(scope="module")
+def tok():
+    return AutoTokenizer.from_pretrained(TEXT_MODEL)
+
+
+def test_labels_are_single_tokens_after_answer(tok):
+    jev = AnyJev(tok, Fake())
+    assert len(jev.labels) == 255 and jev.labels[:3] == ["A", "B", "C"] and len(set(jev.ids)) == 255
+    _, prompts, _ = render(tok, STATE, QUESTIONS, jev.labels)
+    for text, _ in prompts.values():
+        base = tok.encode(text, add_special_tokens=False)
+        for label, i in zip(jev.labels[:40], jev.ids):
+            assert tok.encode(text + " " + label, add_special_tokens=False) == base + [i]
+
+
+def test_prefix_is_shared_token_for_token(tok):
+    jev = AnyJev(tok, Fake())
+    prefix, prompts, _ = render(tok, STATE, QUESTIONS, jev.labels)
+    seqs = [tok.encode(t, add_special_tokens=False) for t, _ in prompts.values()]
+    common = min(len(os.path.commonprefix([seqs[0], s])) for s in seqs)
+    assert all(t.startswith(prefix) for t, _ in prompts.values())
+    assert common >= len(tok.encode(prefix, add_special_tokens=False)) - 1  # at most the boundary token re-merges
+
+
+def test_answers_and_warmup(tok):
+    fake = Fake()
+    out = AnyJev(tok, fake)(STATE, QUESTIONS)
+    p = [math.exp(-i) for i in range(3)]
+    p = [x / sum(p) for x in p]
+    assert len(fake.warms) == 1 and len(fake.calls) == 3
+    assert out["refund"]["noul"] == pytest.approx(1 / (1 + math.exp(-1)))  # Yes is option A
+    assert out["department"]["choice"] == "billing"
+    assert out["urgency"]["score"] == pytest.approx(p[1] + 2 * p[2])
+    assert all("Options:\nA. " in t for t, _ in fake.calls)
+
+
+def test_image_parts_become_placeholders(tok):
+    state = [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:x"}},
+                                          {"type": "text", "text": "look"}]}]
+    proc = AutoTokenizer.from_pretrained(VL_MODEL)
+    _, prompts, images = render(proc, state, {"q": {"type": "noul", "instructions": "Red?"}}, ["A", "B"])
+    assert images == ["data:x"] and prompts["q"][0].count("<|image_pad|>") == 1
+
+
+def _cpu_friendly():
+    """Qwen3.5 linear-attention layers default to CUDA-only kernels; use transformers' torch fallbacks on CPU."""
+    import torch
+    if torch.cuda.is_available():
+        return
+    import transformers.models.qwen3_5.modeling_qwen3_5 as m
+    for name in ("causal_conv1d_fn", "torch_chunk_gated_delta_rule", "torch_recurrent_gated_delta_rule"):
+        f = getattr(m, name)
+        setattr(m, name, getattr(f, "__wrapped__", f))
+
+
+@slow
+def test_hf_text_sees_all_options(tok):
+    jev = AnyJev(tok, HF(TEXT_MODEL, dtype="float32"))
+    q = lambda opts: {"q": {"type": "choice", "instructions": "What color is the sky?", "criteria": dict.fromkeys(opts)}}
+    _, a, _ = render(tok, "The sky is blue.", q(["red", "green", "none of the above"]), jev.labels)
+    _, b, _ = render(tok, "The sky is blue.", q(["red", "blue", "none of the above"]), jev.labels)
+    la = jev.backend.score(a["q"][0], [], jev.ids[:3])
+    lb = jev.backend.score(b["q"][0], [], jev.ids[:3])
+    assert abs(la[0] - lb[0]) > 1e-3  # option A's raw logit moved when only option B changed
+    # Qwen3-0.6B zero-shot prefers "none of the above" here in every prompt ending tried (labels hold ~99% of the
+    # next-token mass), so the accuracy check uses plain options: a model limit, not a readout bug.
+    assert jev("The sky is blue.", q(["red", "blue", "green"]))["q"]["choice"] == "blue"
+    out = jev(STATE, QUESTIONS)
+    assert set(out) == set(QUESTIONS) and out["department"]["choice"] == "billing"
+
+
+@slow
+def test_hf_image_question(tmp_path):
+    from PIL import Image
+    from transformers import AutoProcessor
+    _cpu_friendly()
+    img = tmp_path / "red.png"
+    Image.new("RGB", (64, 64), (220, 20, 20)).save(img)
+    proc = AutoProcessor.from_pretrained(VL_MODEL)
+    jev = AnyJev(proc, HF(VL_MODEL, dtype="float32"))
+    state = [{"role": "user", "content": [{"type": "image", "image": str(img)}, {"type": "text", "text": "Here is a picture."}]}]
+    out = jev(state, {"color": {"type": "choice", "instructions": "What color is the square?",
+                                "criteria": {"red": None, "blue": None, "green": None}}})
+    assert out["color"]["choice"] == "red", out
