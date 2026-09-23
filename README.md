@@ -130,7 +130,8 @@ window attends to its zero padding. A 2 s clip is off by 0.20 in probability, an
 transformers for audio.
 ³ `test_mlx_matches_hf`, run on the mlx CPU build. No prefix cache: each question is a full prefill.
 ⁴ Qwen3.6 (27B dense, 35B-A3B MoE), TP 2 and TP 4. SGLang 0.5.9 loads Qwen3.6 but scores it wrong (off by up to 0.8
-in probability on text), so use 0.5.18. On 35B-A3B every argmax agrees, but one near-tie question (0.77 vs 0.22)
+in probability on text), so use 0.5.18. It also mis-scores Qwen3.5-27B at TP 2 (JevBench public accuracy 0.39 vs
+0.88 on 0.5.18). On 35B-A3B every argmax agrees, but one near-tie question (0.77 vs 0.22)
 differs by 0.05 between any two of SGLang, vLLM and transformers. That is bf16 MoE routing noise, so run MoE parity
 with `--tol 0.06`. Qwen3.8-27B passes with `--enable-fp32-lm-head` (bf16 head: 0.031 on one question).
 ⁵ vLLM 0.26 accepts `content_parts` on `/inference/v1/generate` but ignores the media. Use vLLM 0.30+ for media.
@@ -153,6 +154,33 @@ new checkpoints on it too.
 
 `--prompt jevlm` is for checkpoints fine-tuned on a raw completion prompt with no chat template:
 `State: … Question: … Options: A. … Answer with the letter of the best option.\nAnswer:`. It is text only.
+
+## JevBench, zero-shot
+
+Stock instruct weights, `--prompt chat`, no fine-tuning, SGLang 0.5.18 for the 27B models and 0.5.9 for the rest, on
+A100s. The official JevBench v1.4.0 Score (2026-09-23) needs the 308 sealed items, which only the maintainers run, so
+this table has two numbers:
+
+- **Public**: accuracy on the 231 public items (standard 72, easy 48, hard 111), ranked against the 49 entrants'
+  published per-item results on the same items.
+- **Est. v1.4**: the official `composite_v14` formula (it reproduces every published score). Two inputs are
+  assumptions: sealed accuracy is the 25th / 50th / 75th percentile of one-pass entrants whose public accuracy is
+  within ±0.05, and sealed-inclusive calibration is C13 × 0.885 (the entrants' median ratio). Cost uses the
+  official self-hosted rule (hosted list price of the same weights × 668 measured input tokens per decision).
+  Speed uses the official self-hosted adjustment (latency ×2 + 0.15 s). Ranks are among the 71 ranked systems.
+
+| model | public acc | hard 111 | public rank /50 | est. v1.4 score | est. v1.4 rank /72 |
+|---|---|---|---|---|---|
+| Qwen3.5-27B | 0.879 | 0.775 | #4 | 43.1 / **46.9** / 48.9 | #14 / **#10** / #7 |
+| Qwen3.6-27B | 0.866 | 0.748 | #7 | 42.4 / **46.0** / 47.9 | #14 / **#11** / #7 |
+| Qwen3.8-27B | 0.840 | 0.703 | #13 | 37.4 / **41.4** / 45.6 | #21 / **#14** / #11 |
+| Qwen3.5-9B | 0.810 | 0.667 | #17 | 33.6 / **35.2** / 40.8 | #27 / **#24** / #17 |
+| Qwen3.5-4B | 0.740 | 0.595 | #23 | 33.1 / **36.1** / 38.5 | #29 / **#23** / #19 |
+
+The three systems above Qwen3.5-27B on public items are two reasoning LLMs (DeepSeek V4.1 Flash, GPT-5.6 Luna) and
+OpenJev in thinking mode. The official v1.4 top five score 54–63. The gap to them comes from the sealed set: one-pass
+systems score 0.26–0.36 there (chance is 0.293). For the 27B models the sealed term and the public-to-sealed gap
+penalty cut Intelligence from about 83 to about 48, and the Intelligence < 50 gate then lowers the score again.
 
 ## Using it for RL
 
