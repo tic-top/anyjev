@@ -67,9 +67,14 @@ def main():
     except (OSError, ValueError, AttributeError):
         processor = AutoTokenizer.from_pretrained(a.model)
     backend = BACKENDS[a.backend](url=a.url, model=a.served_model_name or a.model)
-    srv = ThreadingHTTPServer((a.host, a.port), Handler)
-    srv.jev, srv.name = AnyJev(processor, backend, a.temperature, a.prompt), a.served_model_name or a.model
-    print(f"anyjev on http://{a.host}:{a.port}  model={a.model} backend={a.backend} labels={len(srv.jev.labels)}", flush=True)
+    serve(AnyJev(processor, backend, a.temperature, a.prompt), a.served_model_name or a.model, a.host, a.port)
+
+
+def serve(jev, name, host="127.0.0.1", port=8080):
+    """Blocking /v1/systemone server around an AnyJev instance (also used by projects that build their own AnyJev)."""
+    srv = ThreadingHTTPServer((host, port), Handler)
+    srv.jev, srv.name = jev, name
+    print(f"anyjev on http://{host}:{port}  model={name} prompt={jev.style} T={jev.T:.4f} labels={len(jev.labels)}", flush=True)
     srv.serve_forever()
 
 
