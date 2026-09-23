@@ -2,6 +2,4 @@
 One prefill per question, all options in the prompt, one label token read out."""
 from .engine import LLM2Jev
 
-AnyJev = LLM2Jev  # name before the rename; the `anyjev` package re-exports everything
-
-__all__ = ["LLM2Jev", "AnyJev"]
+__all__ = ["LLM2Jev"]
