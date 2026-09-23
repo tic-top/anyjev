@@ -14,12 +14,21 @@ show up in the first few lines. Collecting everything and printing it only at th
   lines appear, not after the run finishes.
 - Log the numbers you will judge the run by (per-question probs/argmax, ms, errors). "done" alone doesn't count.
 
-## Rule: finished worktree → merge into main, push, delete it, no PRs
+## Rule: git flow (small project, no PRs, no asking)
 
-Small project, no review flow. When work in a worktree is done and checked, do all of this without asking:
-commit in the worktree → leave it (ExitWorktree `keep`) → in the main checkout `git merge <branch>` →
-`git push origin main` → `git worktree remove <path>` and `git branch -d <branch>`. Don't push the worktree branch.
-**Never open a PR.** If the merge conflicts with uncommitted changes in the main checkout, stop and say so.
+**Never open a PR.** All finished work ends up committed on `main` and pushed. Don't ask first.
+
+- **Small change** (docs, CLAUDE.md, comments, one-line tweaks, config): no worktree. Edit in the main checkout,
+  commit only the files you touched (`git add <files>`; the user may have unrelated uncommitted work), `git push origin main`.
+  `.claude/settings.json` sets `bgIsolation: none` so background sessions may edit the main checkout.
+- **New feature or bug fix**: use a worktree (EnterWorktree).
+  1. Before entering, make sure `main` is pushed: the worktree branches from `origin/main`, not local `main`.
+  2. Inside the worktree, edit files with the Edit/Write tools and run git as plain commands from the worktree dir.
+     The session guard refuses `git -C <main checkout>` and scripts/heredocs whose text mentions git.
+  3. Commit in the worktree → ExitWorktree `keep` → in the main checkout: `git merge <branch>`,
+     `git push origin main`, `git worktree remove <path>`, `git branch -d <branch>`.
+  4. Never push the worktree branch (a remote copy makes `git branch -d` refuse).
+- If the merge conflicts with uncommitted changes in the main checkout, stop and say so.
 
 ## Commands
 
