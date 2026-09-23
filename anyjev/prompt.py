@@ -84,7 +84,7 @@ def options_of(question):
 def render(processor, state, questions, labels, style="chat"):
     """-> (prefix text, {qid: (full prompt text, answer keys)}, images). `processor` is a tokenizer or an HF processor.
     style="chat": the model's chat template, thinking off (default, works zero-shot).
-    style="jevlm": the raw prompt baby-jev letters checkpoints were trained on, byte for byte."""
+    style="jevlm": a raw completion prompt (no chat template) for checkpoints fine-tuned on it; text only."""
     if style == "jevlm":
         return _render_jevlm(state, questions, labels)
     if style != "chat":
@@ -109,7 +109,7 @@ JEVLM_SUFFIX = "Answer with the letter of the best option.\nAnswer:"
 
 
 def jevlm_options(question):
-    """Option texts exactly as baby-jev records store them: noul false first, 'key: description', 'i: level'."""
+    """jevlm option texts: noul false first ('false: …', 'true: …'), choice 'key: description', score 'i: level'."""
     typ, crit = question.get("type"), question.get("criteria")
     if typ == "noul":
         crit = crit or {}

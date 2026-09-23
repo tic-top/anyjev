@@ -19,7 +19,8 @@ AnyJev is an independent implementation of the documented System One wire format
 ## Quick start
 
 ```bash
-pip install -e .
+pip install "anyjev @ git+https://github.com/tic-top/anyjev"          # client + server; the engine runs separately
+pip install "anyjev[hf,vision] @ git+https://github.com/tic-top/anyjev" # + in-process transformers backend
 
 # SGLang
 python -m sglang.launch_server --model-path Qwen/Qwen3.5-2B --port 30000
@@ -30,8 +31,18 @@ vllm serve Qwen/Qwen3-0.6B --max-logprobs 256 --return-tokens-as-token-ids --por
 anyjev --model Qwen/Qwen3-0.6B --backend vllm --url http://127.0.0.1:8000
 
 # transformers, in-process reference (slow, no prefix cache)
-pip install -e '.[hf,vision]'
 anyjev --model Qwen/Qwen3-0.6B --backend hf
+```
+
+From Python, without the HTTP server:
+
+```python
+from transformers import AutoProcessor
+from anyjev import AnyJev
+from anyjev.backends import SGLang
+
+jev = AnyJev(AutoProcessor.from_pretrained("Qwen/Qwen3.5-2B"), SGLang("http://127.0.0.1:30000"))
+jev(state, questions)  # {"refund": {"type": "noul", "noul": 0.97}, ...}
 ```
 
 ```bash
@@ -108,9 +119,18 @@ python scripts/parity.py --model Qwen/Qwen3.5-2B --backend sglang --url http://1
 
 ### Prompt styles
 
-`--prompt chat` (default) uses the model's chat template, with thinking off. `--prompt jevlm` uses the raw
-`State: … Answer with the letter of the best option.\nAnswer:` prompt that baby-jev letters checkpoints were trained
-on, so those checkpoints can be served without retraining.
+`--prompt chat` (default) uses the model's chat template, with thinking off. Use it for instruct models, and train
+new checkpoints on it too.
+
+`--prompt jevlm` is for checkpoints fine-tuned on a raw completion prompt with no chat template:
+`State: … Question: … Options: A. … Answer with the letter of the best option.\nAnswer:`. It is text only.
+
+## Using it for RL
+
+For each question, the readout is a normalized distribution over the options, π(option | state). It comes from one
+prefill, on the same engines RL frameworks already use for rollouts, so it can serve as a decision policy directly.
+Use the same `anyjev.prompt.render` and label ids on the training side, so that rollout and learner score the same
+logit.
 
 ## Tests
 
