@@ -9,8 +9,13 @@ Exit code 1 if any argmax disagrees or a probability differs by more than --tol.
 import argparse
 import base64
 import io
+import math
+import os
+import struct
 import sys
+import tempfile
 import time
+import wave
 
 from anyjev.backends import BACKENDS, HF
 from anyjev.prompt import find_labels, render
@@ -24,7 +29,32 @@ COUNTRIES = ["France", "Japan", "Brazil", "Kenya", "Canada", "India", "Norway", 
              "Chad", "Mali", "Laos", "Oman", "Fiji", "Togo", "Niger", "Qatar"]
 
 
-def requests_for(vision):
+def moving_square(path, n=16, size=320, fps=8):
+    """A red square sliding left to right on white, written as H.264 mp4 (needs PyAV). 320px: engines upscale smaller
+    videos differently (SGLang raises 128px frames to ~320px, HF and vLLM keep them)."""
+    import av
+    import numpy as np
+    out = av.open(path, "w")
+    stream = out.add_stream("libx264", rate=fps)
+    stream.width = stream.height = size
+    stream.pix_fmt = "yuv420p"
+    for i in range(n):
+        frame = np.full((size, size, 3), 255, np.uint8)
+        x = 4 + i * (size - size // 4 - 8) // (n - 1)
+        frame[size // 3:size // 3 + size // 4, x:x + size // 4] = (220, 20, 20)
+        out.mux(stream.encode(av.VideoFrame.from_ndarray(frame, format="rgb24")))
+    out.mux(stream.encode())
+    out.close()
+
+
+def beep(path, hz=440, seconds=2, rate=16000):
+    with wave.open(path, "wb") as w:
+        w.setnchannels(1), w.setsampwidth(2), w.setframerate(rate)
+        w.writeframes(b"".join(struct.pack("<h", int(12000 * math.sin(2 * math.pi * hz * t / rate)))
+                               for t in range(seconds * rate)))
+
+
+def requests_for(vision, audio=False):
     out = [
         ("support", STATE, {
             "refund": {"type": "noul", "instructions": "Does the user request a refund?"},
@@ -49,6 +79,21 @@ def requests_for(vision):
                                                            {"type": "text", "text": "Here is a picture."}]}],
                     {"color": {"type": "choice", "instructions": "What color is the square?",
                                "criteria": {"red": None, "blue": None, "green": None}}}))
+        video = os.path.join(tempfile.mkdtemp(), "move.mp4")
+        moving_square(video)
+        out.append(("video", [{"role": "user", "content": [{"type": "video", "video": video},
+                                                           {"type": "text", "text": "Here is a video."}]}],
+                    {"direction": {"type": "choice", "instructions": "Which way does the red square move?",
+                                   "criteria": {"left": None, "right": None, "up": None, "down": None}}}))
+    if audio:  # a short clip and a full 30 s Whisper window: SGLang 0.5.9 only matches on the full window
+        for seconds in (2, 30):
+            clip = os.path.join(tempfile.mkdtemp(), "beep.wav")
+            beep(clip, seconds=seconds)
+            out.append((f"audio-{seconds}s", [{"role": "user", "content": [{"type": "audio", "audio": clip},
+                                                                          {"type": "text", "text": "Here is a recording."}]}],
+                        {"sound": {"type": "choice", "instructions": "What is in the recording?",
+                                   "criteria": {"speech": "a person talking", "tone": "a steady electronic beep",
+                                                "dog": "a dog barking"}}}))
     return out
 
 
@@ -72,7 +117,8 @@ def main():
 
     bad = 0
     print(f"{'request':12} {'question':10} {'K':>3} {'max|dℓ|':>8} {'max|dp|':>8} {'argmax':>7} {'engine ms':>9}")
-    for name, state, questions in requests_for(ref.processor is not None):
+    cfg = ref.model.config
+    for name, state, questions in requests_for(hasattr(cfg, "vision_config"), hasattr(cfg, "audio_config")):
         prefix, prompts, images = render(processor, state, questions, labels)
         engine.warm(prefix, images)
         for qid, (text, keys) in prompts.items():

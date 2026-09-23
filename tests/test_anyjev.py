@@ -1,5 +1,5 @@
 """Fast tests use a fake backend and a real tokenizer. ANYJEV_SLOW=1 also runs real models through the HF backend
-(CPU is fine): Qwen3-0.6B for text, Qwen3.5-2B for an image question."""
+(CPU is fine): Qwen3-0.6B for text, Qwen3.5-2B for image and video questions, Qwen2-Audio-7B for audio."""
 import math
 import os
 
@@ -8,9 +8,9 @@ from transformers import AutoTokenizer
 
 from anyjev import AnyJev
 from anyjev.backends import HF
-from anyjev.prompt import render
+from anyjev.prompt import render, state_messages
 
-TEXT_MODEL, VL_MODEL = "Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B"
+TEXT_MODEL, VL_MODEL, AUDIO_MODEL = "Qwen/Qwen3-0.6B", "Qwen/Qwen3.5-2B", "Qwen/Qwen2-Audio-7B-Instruct"
 slow = pytest.mark.skipif(not os.environ.get("ANYJEV_SLOW"), reason="set ANYJEV_SLOW=1 to run real models")
 STATE = [{"role": "system", "content": "You are a support assistant."},
          {"role": "user", "content": "I was charged twice. Please refund the duplicate."}]
@@ -80,6 +80,14 @@ def test_image_parts_become_placeholders(tok):
     assert images == ["data:x"] and prompts["q"][0].count("<|image_pad|>") == 1
 
 
+def test_video_and_audio_parts_keep_their_kind():
+    state = [{"role": "user", "content": [{"type": "video_url", "video_url": {"url": "v.mp4"}},
+                                          {"type": "image", "image": "i.png"}, {"type": "audio", "audio": "a.wav"}]}]
+    msgs, media = state_messages(state)
+    assert media == [("video", "v.mp4"), "i.png", ("audio", "a.wav")]
+    assert [p["type"] for p in msgs[0]["content"]] == ["video", "image", "audio"]
+
+
 def test_jevlm_style_is_the_raw_letters_prompt(tok):
     jev = AnyJev(tok, Fake(), style="jevlm")
     _, prompts, _ = render(tok, "The sky is blue.", QUESTIONS, jev.labels, "jevlm")
@@ -87,6 +95,10 @@ def test_jevlm_style_is_the_raw_letters_prompt(tok):
                                     "A. false: No\nB. true: Yes\nAnswer with the letter of the best option.\nAnswer:")
     assert prompts["refund"][1] == ["false", "true"] and jev.labels[:2] == ["A", "B"]
     assert "A. 0: Routine\nB. 1: Urgent\nC. 2: Emergency\n" in prompts["urgency"][0]
+
+
+def _question(instructions, *options):
+    return {"q": {"type": "choice", "instructions": instructions, "criteria": dict.fromkeys(options)}}
 
 
 def _cpu_friendly():
@@ -129,3 +141,30 @@ def test_hf_image_question(tmp_path):
     out = jev(state, {"color": {"type": "choice", "instructions": "What color is the square?",
                                 "criteria": {"red": None, "blue": None, "green": None}}})
     assert out["color"]["choice"] == "red", out
+
+
+@slow
+def test_hf_video_question(tmp_path):
+    import sys
+    from transformers import AutoProcessor
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    from parity import moving_square
+    _cpu_friendly()
+    moving_square(str(tmp_path / "move.mp4"))
+    jev = AnyJev(AutoProcessor.from_pretrained(VL_MODEL), HF(VL_MODEL, dtype="float32"))
+    state = [{"role": "user", "content": [{"type": "video", "video": str(tmp_path / "move.mp4")}]}]
+    out = jev(state, _question("Which way does the red square move?", "left", "right", "up", "down"))
+    assert out["q"]["choice"] == "right", out
+
+
+@slow
+def test_hf_audio_question(tmp_path):
+    import sys
+    from transformers import AutoProcessor
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+    from parity import beep
+    beep(str(tmp_path / "beep.wav"))
+    jev = AnyJev(AutoProcessor.from_pretrained(AUDIO_MODEL), HF(AUDIO_MODEL))
+    state = [{"role": "user", "content": [{"type": "audio", "audio": str(tmp_path / "beep.wav")}]}]
+    out = jev(state, _question("What is in the recording?", "a person talking", "a steady electronic beep", "a dog barking"))
+    assert out["q"]["choice"] == "a steady electronic beep", out
