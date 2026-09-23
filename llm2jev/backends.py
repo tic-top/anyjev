@@ -121,13 +121,13 @@ class HF:
         import transformers
         from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
         self.torch = torch
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         cfg = AutoConfig.from_pretrained(model)
         multimodal = hasattr(cfg, "vision_config") or hasattr(cfg, "audio_config")
         # AutoModelForMultimodalLM (transformers 5) also maps audio models; older releases only have image-text-to-text
         mm_cls = getattr(transformers, "AutoModelForMultimodalLM", transformers.AutoModelForImageTextToText)
         cls = mm_cls if multimodal else AutoModelForCausalLM
-        self.model = cls.from_pretrained(model, dtype=getattr(torch, dtype)).to(self.device).eval()
+        # device_map "auto" shards a model too big for one GPU (e.g. 27B bf16) across all visible GPUs
+        self.model = cls.from_pretrained(model, dtype=getattr(torch, dtype), device_map=device or "auto").eval()
         self.processor = AutoProcessor.from_pretrained(model) if multimodal else None
         self.tok = AutoTokenizer.from_pretrained(model)
         self.lock = threading.Lock()  # LLM2Jev scores from worker threads; one in-process model runs one forward at a time
@@ -154,7 +154,7 @@ class HF:
             inputs = self.processor(text=[text], return_tensors="pt", **kw)
         else:
             inputs = {"input_ids": torch.tensor([self.tok.encode(text, add_special_tokens=False)])}
-        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
         with self.lock, torch.no_grad():
             logits = self.model(**inputs).logits[0, -1].float().log_softmax(-1)
         return [float(logits[i]) for i in ids]

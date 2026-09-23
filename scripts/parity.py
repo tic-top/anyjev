@@ -103,7 +103,7 @@ def main():
     ap.add_argument("--backend", choices=["sglang", "vllm"], required=True)
     ap.add_argument("--url", required=True)
     ap.add_argument("--served-model-name")
-    ap.add_argument("--device", help="device for the HF reference (default: cuda if available)")
+    ap.add_argument("--device", help="device (map) for the HF reference (default: auto, shards across all visible GPUs)")
     ap.add_argument("--dtype", default="bfloat16", help="HF reference dtype; float32 separates engine noise from reference noise")
     ap.add_argument("--tol", type=float, default=0.03,
                     help="max allowed probability difference; bf16 engine kernels differ from HF by up to ~0.03")
