@@ -22,8 +22,8 @@ aliases. The PyPI project named `anyjev` is a different project.
 ## Quick start
 
 ```bash
-pip install "llm2jev @ git+https://github.com/tic-top/llm2jev"         # client + server; the engine runs separately
-pip install "llm2jev[hf,vision] @ git+https://github.com/tic-top/llm2jev" # + in-process transformers backend
+pip install llm2jev              # client + server; the engine runs separately
+pip install "llm2jev[hf,vision]" # + in-process transformers backend (video and audio decoders included)
 
 # SGLang
 python -m sglang.launch_server --model-path Qwen/Qwen3.5-2B --port 30000
