@@ -113,9 +113,11 @@ Answer:▸ 读取 ' A' ' B' ' C'
 
 | 后端 | 文本 | 图片 | 视频 | 音频 |
 |---|---|---|---|---|
-| transformers | 参考（Qwen3-0.6B、Qwen3.5-2B、Qwen2-Audio-7B） | 参考（Qwen3.5-2B） | 参考（Qwen3.5-2B） | 参考（Qwen2-Audio-7B） |
+| transformers | 参考（Qwen3-0.6B、Qwen3.5-2B、Qwen3.6-27B、Qwen3.6-35B-A3B、Qwen3.8-27B、Qwen2-Audio-7B） | 参考（Qwen3.5-2B、Qwen3.6-27B、Qwen3.6-35B-A3B、Qwen3.8-27B） | 参考（Qwen3.5-2B、Qwen3.6-27B、Qwen3.6-35B-A3B、Qwen3.8-27B）⁶ | 参考（Qwen2-Audio-7B） |
+| SGLang 0.5.18 | 一致 ✓ Qwen3.6-27B、Qwen3.6-35B-A3B、Qwen3.8-27B ⁴ | 一致 ✓ Qwen3.6-27B、Qwen3.6-35B-A3B、Qwen3.8-27B | 一致 ✓ Qwen3.6-27B、Qwen3.6-35B-A3B、Qwen3.8-27B | – |
 | SGLang 0.5.9 | 一致 ✓ Qwen3-0.6B、Qwen3.5-2B、Qwen2-Audio-7B | 一致 ✓ Qwen3.5-2B | 一致 ✓ Qwen3.5-2B ¹ | 仅 30 秒片段 ² |
 | vLLM 0.30.0 | 一致 ✓ Qwen3-0.6B、Qwen3.5-2B、Qwen2-Audio-7B | 一致 ✓ Qwen3.5-2B | 一致 ✓ Qwen3.5-2B | 一致 ✓ Qwen2-Audio-7B |
+| vLLM 0.26.0 | 一致 ✓ Qwen3.6-27B、Qwen3.6-35B-A3B ⁴ | ✗ ⁵ | ✗ ⁵ | – |
 | MLX (mlx-lm) | 与 transformers 一致 ✓ Qwen3-0.6B ³ | – | – | – |
 
 ¹ 在容差之内，但并非逐字节一致。对 Qwen3.5 视频，SGLang 去掉了模板中每帧块外层的
@@ -124,6 +126,12 @@ Answer:▸ 读取 ' A' ' B' ' C'
 ² SGLang 0.5.9 运行 Qwen2-Audio 编码器时没有使用特征 attention mask，因此短于 Whisper 30 秒窗口的片段会关注到
 零填充部分。2 秒片段的概率偏差为 0.20，30 秒片段则一致。音频请使用 vLLM 或 transformers。
 ³ `test_mlx_matches_hf`，在 mlx CPU 版本上运行。无前缀缓存：每个问题都是一次完整 prefill。
+⁴ Qwen3.6（27B dense、35B-A3B MoE），TP 2 和 TP 4。SGLang 0.5.9 能加载 Qwen3.6，但打分是错的（文本概率偏差最高
+0.8），请使用 0.5.18。35B-A3B 上所有 argmax 一致，但有一道接近平局的题（0.77 对 0.22）在 SGLang、vLLM、transformers
+任意两者之间相差 0.05，这是 bf16 MoE 路由噪声，MoE 模型的一致性检查请用 `--tol 0.06`。Qwen3.8-27B 需加 `--enable-fp32-lm-head` 才能通过（bf16 head 下有一题为 0.031）。
+⁵ vLLM 0.26 的 `/inference/v1/generate` 接受 `content_parts`，但会忽略其中的多媒体。多媒体请使用 vLLM 0.30+。
+⁶ transformers 5 用 torchcodec 解码视频，失败时回退到 `torchvision.io.read_video`，而 torchvision 0.26 已删除该函数。
+请安装与 torch 匹配的 torchcodec（torch 2.11 对应 0.11）。
 
 0.01–0.03 的概率差异来自 bf16 kernel 噪声；分词完全一致。对 SGLang，`--enable-fp32-lm-head` 大约能把差距减半。
 vLLM 把纯文本 prompt 发送到 `/v1/completions`，带多媒体的 prompt 则以精确的 token id 加上多媒体数据发送到
