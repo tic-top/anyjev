@@ -32,8 +32,12 @@ python -m sglang.launch_server --model-path Qwen/Qwen3.5-2B --port 30000
 llm2jev --model Qwen/Qwen3.5-2B --backend sglang --url http://127.0.0.1:30000
 
 # vLLM (--enable-scale-out opens the tokens-in endpoint used for images, video and audio)
+# --max-logprobs and --return-tokens-as-token-ids are required: without them the backend rejects every
+# request with an HTTP 400 (llm2jev turns that into a 422, but the message is vLLM's, not "missing flags").
 vllm serve Qwen/Qwen3.5-2B --max-logprobs 256 --return-tokens-as-token-ids --enable-scale-out --port 8000
 llm2jev --model Qwen/Qwen3.5-2B --backend vllm --url http://127.0.0.1:8000
+# --served-model-name only if vllm serve was started with --served-model-name (or a different --model) than
+# what you pass to llm2jev --model; llm2jev needs the exact name the vLLM server answers /v1/completions to.
 
 # transformers, in-process reference (slow, no prefix cache)
 llm2jev --model Qwen/Qwen3-0.6B --backend hf
@@ -52,6 +56,11 @@ from llm2jev.backends import SGLang
 jev = LLM2Jev(AutoProcessor.from_pretrained("Qwen/Qwen3.5-2B"), SGLang("http://127.0.0.1:30000"))
 jev(state, questions)  # {"refund": {"type": "noul", "noul": 0.97}, ...}
 ```
+
+Adding an engine not listed here: a backend is any class with `warm(prefix, images)` and
+`score(text, images, ids) -> (logprobs, prompt_tokens)`, plus `score_many(texts, ids)` if the engine can batch
+prompts in one call (see `llm2jev/backends.py` for the four shipped ones). Pass an instance of it to `LLM2Jev`
+like `SGLang` above, or add it to `BACKENDS` in `backends.py` to also get it from `--backend`.
 
 ```bash
 curl localhost:8080/v1/systemone -H 'Content-Type: application/json' -d '{

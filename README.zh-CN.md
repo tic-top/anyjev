@@ -32,8 +32,12 @@ python -m sglang.launch_server --model-path Qwen/Qwen3.5-2B --port 30000
 llm2jev --model Qwen/Qwen3.5-2B --backend sglang --url http://127.0.0.1:30000
 
 # vLLM（--enable-scale-out 开启 tokens-in 接口，图片、视频和音频要用到）
+# --max-logprobs 和 --return-tokens-as-token-ids 是必须的：不加的话后端会对每个请求返回 HTTP 400
+# （llm2jev 会把它转成 422，但报错内容是 vLLM 原始的，不会提示"少了 flag"）。
 vllm serve Qwen/Qwen3.5-2B --max-logprobs 256 --return-tokens-as-token-ids --enable-scale-out --port 8000
 llm2jev --model Qwen/Qwen3.5-2B --backend vllm --url http://127.0.0.1:8000
+# 只有当 vllm serve 启动时用了 --served-model-name（或跟这里的 --model 不同的 --model）才需要传
+# --served-model-name；llm2jev 需要跟 vLLM 服务端 /v1/completions 认的名字完全一致。
 
 # transformers，进程内参考实现（慢，无前缀缓存）
 llm2jev --model Qwen/Qwen3-0.6B --backend hf
@@ -52,6 +56,11 @@ from llm2jev.backends import SGLang
 jev = LLM2Jev(AutoProcessor.from_pretrained("Qwen/Qwen3.5-2B"), SGLang("http://127.0.0.1:30000"))
 jev(state, questions)  # {"refund": {"type": "noul", "noul": 0.97}, ...}
 ```
+
+接入一个这里没列出的引擎：backend 只是一个带 `warm(prefix, images)` 和
+`score(text, images, ids) -> (logprobs, prompt_tokens)` 方法的类，如果引擎能一次批量打分多个 prompt，
+再加一个 `score_many(texts, ids)`（四个已支持的实现见 `llm2jev/backends.py`）。像上面的 `SGLang` 一样
+把实例传给 `LLM2Jev` 即可直接用；想让 `--backend` 也能选到它，把它加进 `backends.py` 里的 `BACKENDS`。
 
 ```bash
 curl localhost:8080/v1/systemone -H 'Content-Type: application/json' -d '{
